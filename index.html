@@ -9040,7 +9040,7 @@ window.IELTS_START_SOUND = 'data:audio/mp4;base64,AAAAHGZ0eXBNNEEgAAACAE00QSBpc2
   function soundOn() {
     try {
       var v = localStorage.getItem(K_SOUND);
-      return v === null ? true : v === '1';
+      return v === null ? false  : v === '1';
     } catch (e) { return true; }
   }
   function setSound(on) {
