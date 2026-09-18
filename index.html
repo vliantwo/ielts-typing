@@ -8351,6 +8351,7 @@ function checkSpell(t){
   const hit = toZh ? zhHit(raw, w.zh) : (raw.toLowerCase() === w.en.toLowerCase());
   if(hit){
     if(t.tries === 1) wSess.stat.first++;
+    try { if(window.IeltsFX) window.IeltsFX.play('good'); } catch(_e){}
     $('#w-fb').innerHTML = '<div class="w-fb ok">✓ 正确！' + (t.tries === 1 ? '一次通过' : '')
       + (toZh ? '&nbsp;&nbsp;参考释义：' + esc(w.zh) : '') + '</div>';
     if(t.kind === 'new-spell'){
@@ -8370,6 +8371,7 @@ function checkSpell(t){
     setTimeout(() => { wSess.i++; renderTask(); }, 650);
   }else if(!t.revealed){
     t.revealed = true;
+    try { if(window.IeltsFX) window.IeltsFX.play('bad'); } catch(_e){}
     $('#w-fb').innerHTML = '<div class="w-fb bad">✗ '
       + (toZh ? '还不对。参考释义：<span class="fix">' + esc(w.zh) + '</span> —— 请照着再打一遍'
               : '拼错了。正确拼写：<span class="fix">' + esc(w.en) + '</span> —— 请照着再打一遍')
@@ -8383,6 +8385,7 @@ function finishSession(){
   const sp = st.nw + st.spell;
   const rate = sp ? Math.round(st.first / sp * 100) : 0;
   islandPulse();
+  try { if (window.IeltsFX) window.IeltsFX.play('done'); } catch (e) {}
   wShow('home');
   renderWordsHome();
   showModal(
@@ -9648,6 +9651,34 @@ window.IELTS_START_SOUND = 'data:audio/mp4;base64,AAAAHGZ0eXBNNEEgAAACAE00QSBpc2
                     (soundOn() ? '开' : '关') + '</button>';
     box.appendChild(snd);
 
+    // 交互反馈：音效 + 震动（由 apple_fx 提供）
+    var FX = global.IeltsFX;
+    if (FX) {
+      var hapticLab = FX.hapticLabel ? FX.hapticLabel() : '震动反馈';
+      var fxRows = [
+        { k: 'snd', ico: '🔊', lab: '操作音效（点击 / 评分）',
+          get: function () { return FX.soundOn(); },
+          set: function (v) { FX.setSound(v); } },
+        { k: 'hap', ico: '📳', lab: hapticLab,
+          get: function () { return FX.hapticOn(); },
+          set: function (v) { FX.setHaptic(v); } }
+      ];
+      fxRows.forEach(function (it) {
+        var d = document.createElement('div');
+        d.className = 'lg-snd';
+        d.innerHTML = '<span>' + it.ico + ' ' + it.lab + '</span>' +
+                      '<button class="lg-sw' + (it.get() ? ' on' : '') + '">' +
+                      (it.get() ? '开' : '关') + '</button>';
+        d.querySelector('button').onclick = function () {
+          var v = !it.get();
+          it.set(v);
+          this.textContent = v ? '开' : '关';
+          this.className = 'lg-sw' + (v ? ' on' : '');
+        };
+        box.appendChild(d);
+      });
+    }
+
     var row = document.createElement('div');
     row.className = 'lg-row';
     row.innerHTML = '<button class="lg-btn ghost sm" id="lg-switch">换个账号</button>' +
@@ -10053,140 +10084,282 @@ window.IELTS_START_SOUND = 'data:audio/mp4;base64,AAAAHGZ0eXBNNEEgAAACAE00QSBpc2
 })(window);
 
 /*!
- * 苹果风反馈增强
+ * 反馈增强 v2：音效 + 震动 + 视觉
  * ------------------------------------------------------------
- * · 统一弹簧曲线（回弹感），替换原来偏线性的过渡
- * · 按压反馈更强：按下去明显缩一下，松手弹回
- * · 悬浮抬升：卡片/条目 hover 时浮起，投影加深
- * · 触觉震动：安卓可用，iPhone 走视觉反馈（Taptic 网页调不到）
- * · 背单词三档评分：点下去卡片弹性飞出 + 震动，反馈更实
- * · 弹窗、数字、切换全部换成弹性动画
+ * 音效全部用 Web Audio 实时合成，不内嵌任何音频文件（0 字节）。
+ *  · tap   轻点        · good  答对/认识   · meh  模糊
+ *  · bad   忘记/拼错   · done  完成一轮    · tick 切换
+ * 震动：安卓走 navigator.vibrate；iOS 不支持，改用「视觉震动」补偿。
+ * 开关：IeltsFX.setSound(on) / IeltsFX.setHaptic(on)，状态存本地。
  */
 (function (global) {
   'use strict';
 
-  var SPRING = 'cubic-bezier(.34,1.56,.64,1)';
-  var EASE   = 'cubic-bezier(.4,0,.2,1)';
+  var K_FX = 'ielts_fx_v1';   // { sound:0|1, haptic:0|1 }
+  var cfg = { sound: true, haptic: true };
 
-  /* ---------- 1. 样式增强 ---------- */
-  function injectCSS() {
-    if (document.getElementById('apfx-css')) return;
-    var css = document.createElement('style');
-    css.id = 'apfx-css';
-    css.textContent = [
+  try {
+    var raw = global.localStorage ? global.localStorage.getItem(K_FX) : null;
+    if (raw) {
+      var o = JSON.parse(raw);
+      if (typeof o.sound === 'boolean') cfg.sound = o.sound;
+      if (typeof o.haptic === 'boolean') cfg.haptic = o.haptic;
+    }
+  } catch (e) {}
 
-      /* 全局：弹簧曲线 + 更强的按压 */
-      'button,.mode-card,.lib-item,.ip-bg,.cat-chip,.chip,.lg-avo,.lg-sw{',
-      '  -webkit-tap-highlight-color:transparent;',
-      '  transition:transform .34s ' + SPRING + ',box-shadow .28s ' + EASE +
-        ',background .2s ' + EASE + ',border-color .2s ' + EASE + '}',
-
-      /* 按压：所有可点元素缩得比原来更明显 */
-      '.mode-card:active{transform:translateY(0) scale(.955)!important;',
-      '  box-shadow:0 2px 8px rgba(0,0,0,.10)!important}',
-      '.lib-item:active{transform:scale(.955)!important}',
-      '.cat-chip:active{transform:scale(.93)!important}',
-      '.btn:active,.w-btn:active{transform:scale(.94)!important}',
-      '.playbtn:active{transform:scale(.88)!important}',
-      '.w-say:active{transform:scale(.87)!important}',
-      '.lg-avo:active{transform:scale(.88)!important}',
-      '.lg-sw:active{transform:scale(.9)!important}',
-
-      /* 悬浮抬升（桌面端） */
-      '@media(hover:hover){',
-      '  .mode-card:hover{transform:translateY(-5px) scale(1.012);',
-      '    box-shadow:0 20px 44px rgba(0,0,0,.14)}',
-      '  .lib-item:hover{transform:translateY(-3px) scale(1.008);',
-      '    box-shadow:0 14px 32px rgba(0,0,0,.13)}',
-      '  .w-btn:hover{transform:translateY(-2px)}',
-      '  .playbtn:hover{transform:scale(1.06)}',
-      '  .w-say:hover{transform:scale(1.07)}',
-      '}',
-
-      /* 波纹：更大更柔更像 iOS */
-      '.ripple{animation:apfxRip .62s ' + EASE + ' forwards!important}',
-      '@keyframes apfxRip{to{transform:scale(2.6);opacity:0}}',
-
-      /* 卡片入场：弹性 */
-      '.view.active{animation:apfxIn .38s ' + SPRING + '!important}',
-      '@keyframes apfxIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}',
-
-      /* 单词卡：评分后的弹性反馈 */
-      '.w-card.apfx-pop{animation:apfxPop .46s ' + SPRING + '!important}',
-      '@keyframes apfxPop{0%{transform:scale(1)}28%{transform:scale(.955)}100%{transform:scale(1)}}',
-      '.w-card.apfx-out-l{animation:apfxOutL .34s ' + EASE + ' forwards!important}',
-      '.w-card.apfx-out-r{animation:apfxOutR .34s ' + EASE + ' forwards!important}',
-      '@keyframes apfxOutL{to{opacity:0;transform:translateX(-16%) scale(.94)}}',
-      '@keyframes apfxOutR{to{opacity:0;transform:translateX(16%) scale(.94)}}',
-
-      /* 统计数字变化：轻微弹一下 */
-      '.stat b,.hstat b,.ip-sc b,.mode-live.apfx-num{transition:transform .3s ' + SPRING + '}',
-      '.apfx-bump{animation:apfxBump .42s ' + SPRING + '!important}',
-      '@keyframes apfxBump{0%{transform:scale(1)}35%{transform:scale(1.22)}100%{transform:scale(1)}}',
-
-      /* 成就解锁：弹性放大 */
-      '.ip-bg{transition:transform .34s ' + SPRING + ',box-shadow .28s ' + EASE + '}',
-      '@media(hover:hover){.ip-bg:hover{transform:scale(1.09) translateY(-2px)}}',
-
-      /* 顶栏毛玻璃更浓一点 */
-      '.topbar{background:rgba(245,245,247,.86)!important}',
-
-      /* 弹窗入场：弹簧 */
-      '.lg-card{animation:apfxCardIn .42s ' + SPRING + '!important}',
-      '@keyframes apfxCardIn{from{opacity:0;transform:translateY(22px) scale(.94)}to{opacity:1;transform:none}}',
-
-      /* 焦点环更柔 */
-      'input:focus,textarea:focus,select:focus{box-shadow:0 0 0 5px rgba(0,113,227,.16)!important}',
-
-      /* 尊重系统的"减弱动态效果" */
-      '@media(prefers-reduced-motion:reduce){',
-      '  *{animation-duration:.01ms!important;transition-duration:.01ms!important}',
-      '}'
-    ].join('');
-    document.head.appendChild(css);
+  function save() {
+    try { if (global.localStorage) global.localStorage.setItem(K_FX, JSON.stringify(cfg)); } catch (e) {}
   }
 
-  /* ---------- 2. 触觉震动 ---------- */
-  function buzz(ms) {
+  var isIOS = /iPad|iPhone|iPod/.test(global.navigator && global.navigator.userAgent) ||
+              (global.navigator && global.navigator.platform === 'MacIntel' &&
+               global.navigator.maxTouchPoints > 1);
+
+  /* ---------- 音效：Web Audio 合成 ---------- */
+  var ac = null;
+
+  function ctx() {
+    if (ac) return ac;
     try {
-      if (global.navigator && global.navigator.vibrate) global.navigator.vibrate(ms);
+      var AC = global.AudioContext || global.webkitAudioContext;
+      if (!AC) return null;
+      ac = new AC();
+    } catch (e) { ac = null; }
+    return ac;
+  }
+
+  /* iOS 必须在用户手势的同步栈里 resume，否则一直挂起 */
+  function unlock() {
+    var c = ctx();
+    if (!c) return;
+    if (c.state === 'suspended') { try { c.resume(); } catch (e) {} }
+  }
+
+  function tone(freq, dur, gain, type, delay, slideTo) {
+    var c = ctx();
+    if (!c) return;
+    var t0 = c.currentTime + (delay || 0);
+    var o = c.createOscillator();
+    var g = c.createGain();
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    // 快起快落，避免爆音
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(c.destination);
+    o.start(t0);
+    o.stop(t0 + dur + 0.02);
+  }
+
+  var SFX = {
+    // 轻点：极短的高频 tick，iOS 键盘声那种手感
+    tap:  function () { tone(1900, 0.035, 0.055, 'sine'); },
+    // 认识：明亮上行两音
+    good: function () { tone(880, 0.09, 0.10, 'sine'); tone(1318, 0.12, 0.085, 'sine', 0.07); },
+    // 模糊：中性单音
+    meh:  function () { tone(660, 0.08, 0.07, 'triangle'); },
+    // 忘记：低沉下行
+    bad:  function () { tone(320, 0.16, 0.10, 'triangle', 0, 190); },
+    // 完成：三音琶音
+    done: function () {
+      tone(784, 0.10, 0.09, 'sine');
+      tone(988, 0.10, 0.09, 'sine', 0.09);
+      tone(1318, 0.20, 0.085, 'sine', 0.18);
+    },
+    // 切换
+    tick: function () { tone(1500, 0.025, 0.04, 'sine'); }
+  };
+
+  /* ---------- 震动 ---------- */
+  function vibrate(pattern) {
+    if (!cfg.haptic) return;
+    try {
+      if (global.navigator && global.navigator.vibrate) global.navigator.vibrate(pattern);
     } catch (e) {}
   }
 
-  /* ---------- 3. 交互增强 ---------- */
+  var HAP = {
+    tap:  [8],
+    good: [14],
+    meh:  [10],
+    bad:  [0, 22, 55, 22],     // 双震，明显一点
+    done: [12, 45, 12, 45, 20]
+  };
+
+  /* ---------- iOS 触觉：借系统开关控件触发 Taptic Engine ----------
+   * iOS Safari 不开放马达接口，但切换带 switch 属性的 checkbox 时，
+   * 系统会附带一次 Taptic 轻反馈。这是非官方行为，Apple 未承诺支持，
+   * 不同系统版本表现不一；失效时自动回落到视觉抖动，不会报错。
+   */
+  var swEl = null, swOK = false;
+
+  function iosHapticInit() {
+    if (swEl) return swEl;
+    try {
+      var lab = document.createElement('label');
+      var inp = document.createElement('input');
+      inp.type = 'checkbox';
+      inp.setAttribute('switch', '');
+      inp.style.cssText = 'position:absolute;opacity:0;width:1px;height:1px';
+      lab.appendChild(inp);
+      lab.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;' +
+                          'opacity:0;pointer-events:none;overflow:hidden';
+      lab.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(lab);
+      swEl = inp;
+      swOK = true;
+    } catch (e) { swOK = false; }
+    return swEl;
+  }
+
+  /* 一次 click = 一次轻反馈；强度靠次数与间隔凑 */
+  function iosTap(times, gap) {
+    if (!cfg.haptic) return false;
+    var s = swEl || iosHapticInit();
+    if (!s) return false;
+    try {
+      var n = times || 1, i = 0;
+      (function step() {
+        if (i++ >= n) return;
+        s.checked = !s.checked;                       // 状态变了系统才给反馈
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+        if (i < n) setTimeout(step, gap || 70);
+      })();
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /* ---------- 视觉震动：给完全拿不到触觉的设备 ---------- */
+  function visualShake(el, hard) {
+    if (!el || !el.animate) return;
+    try {
+      var d = hard ? 7 : 4;
+      el.animate([
+        { transform: 'translateX(0)' },
+        { transform: 'translateX(' + (-d) + 'px)' },
+        { transform: 'translateX(' + d + 'px)' },
+        { transform: 'translateX(' + (-d * 0.6) + 'px)' },
+        { transform: 'translateX(0)' }
+      ], { duration: hard ? 300 : 220, easing: 'ease-in-out' });
+    } catch (e) {}
+  }
+
+  /* iOS 上每种反馈的次数（Taptic 只有一种强度，只能靠次数区分） */
+  var IOS_N = { tap: 1, good: 1, meh: 1, bad: 2, done: 3 };
+
+  /* ---------- 统一出口 ---------- */
+  function play(kind, el) {
+    unlock();
+    if (cfg.sound && SFX[kind]) { try { SFX[kind](); } catch (e) {} }
+    if (!cfg.haptic) return;
+
+    if (isIOS) {
+      var n = IOS_N[kind] || 1;
+      var hit = iosTap(n, 65);
+      // Taptic 拿不到就用抖动补偿，重反馈抖得更明显
+      if (kind === 'bad' || kind === 'done') visualShake(el || document.body, kind === 'bad');
+      return;
+    }
+    vibrate(HAP[kind] || HAP.tap);
+  }
+
+  /* ---------- 绑定 ---------- */
+  var TAP_SEL = '.w-btn,.w-say,.playbtn,.mode-card,.lib-item,.btn,.lg-avo,.lg-sw,' +
+                '.cat-chip,.chip,.lg-btn,#lg-go,#lg-avup,.brand,.logo,.w-stat.click,.ip-bg';
+
+  var CSS = [
+    'button,.mode-card,.lib-item,.ip-bg,.cat-chip,.chip,.lg-avo,.lg-sw{',
+    '  -webkit-tap-highlight-color:transparent;',
+    '  transition:transform .34s cubic-bezier(.34,1.56,.64,1),box-shadow .28s cubic-bezier(.4,0,.2,1),',
+    '  background .2s cubic-bezier(.4,0,.2,1),border-color .2s cubic-bezier(.4,0,.2,1)}',
+    '.mode-card:active{transform:translateY(0) scale(.955)!important;box-shadow:0 2px 8px rgba(0,0,0,.10)!important}',
+    '.lib-item:active{transform:scale(.955)!important}',
+    '.cat-chip:active{transform:scale(.93)!important}',
+    '.btn:active,.w-btn:active{transform:scale(.94)!important}',
+    '.playbtn:active{transform:scale(.88)!important}',
+    '.w-say:active{transform:scale(.87)!important}',
+    '.lg-avo:active{transform:scale(.88)!important}',
+    '.lg-sw:active{transform:scale(.9)!important}',
+    '.logo:active{transform:scale(.92)!important}',
+    '@media(hover:hover){',
+    '  .mode-card:hover{transform:translateY(-5px) scale(1.012);box-shadow:0 20px 44px rgba(0,0,0,.14)}',
+    '  .lib-item:hover{transform:translateY(-3px) scale(1.008);box-shadow:0 14px 32px rgba(0,0,0,.13)}',
+    '  .w-btn:hover{transform:translateY(-2px)}',
+    '  .playbtn:hover{transform:scale(1.06)}',
+    '  .w-say:hover{transform:scale(1.07)}',
+    '}',
+    '.ripple{animation:apfxRip .62s cubic-bezier(.4,0,.2,1) forwards!important}',
+    '@keyframes apfxRip{to{transform:scale(2.6);opacity:0}}',
+    '.view.active{animation:apfxIn .38s cubic-bezier(.34,1.56,.64,1)!important}',
+    '@keyframes apfxIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}',
+    '.w-card.apfx-pop{animation:apfxPop .46s cubic-bezier(.34,1.56,.64,1)!important}',
+    '@keyframes apfxPop{0%{transform:scale(1)}28%{transform:scale(.955)}100%{transform:scale(1)}}',
+    '.w-card.apfx-out-l{animation:apfxOutL .34s cubic-bezier(.4,0,.2,1) forwards!important}',
+    '.w-card.apfx-out-r{animation:apfxOutR .34s cubic-bezier(.4,0,.2,1) forwards!important}',
+    '@keyframes apfxOutL{to{opacity:0;transform:translateX(-16%) scale(.94)}}',
+    '@keyframes apfxOutR{to{opacity:0;transform:translateX(16%) scale(.94)}}',
+    '.stat b,.hstat b,.ip-sc b{transition:transform .3s cubic-bezier(.34,1.56,.64,1)}',
+    '.apfx-bump{animation:apfxBump .42s cubic-bezier(.34,1.56,.64,1)!important}',
+    '@keyframes apfxBump{0%{transform:scale(1)}35%{transform:scale(1.22)}100%{transform:scale(1)}}',
+    '.ip-bg{transition:transform .34s cubic-bezier(.34,1.56,.64,1),box-shadow .28s cubic-bezier(.4,0,.2,1)}',
+    '@media(hover:hover){.ip-bg:hover{transform:scale(1.09) translateY(-2px)}}',
+    '.lg-card{animation:apfxCardIn .42s cubic-bezier(.34,1.56,.64,1)!important}',
+    '@keyframes apfxCardIn{from{opacity:0;transform:translateY(22px) scale(.94)}to{opacity:1;transform:none}}',
+    'input:focus,textarea:focus,select:focus{box-shadow:0 0 0 5px rgba(0,113,227,.16)!important}',
+    '@media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}'
+  ].join('');
+
+  function injectCSS() {
+    if (document.getElementById('apfx-css')) return;
+    var c = document.createElement('style');
+    c.id = 'apfx-css';
+    c.textContent = CSS;
+    document.head.appendChild(c);
+  }
+
   function bind() {
-    // 触觉：按下去震一下（安卓生效，iPhone 静默跳过）
-    var buzzSel = '.w-btn,.w-say,.playbtn,.mode-card,.lib-item,.btn.primary,.lg-avo,.lg-sw';
+    // 通用轻点：按下即响（比 click 更早，手感更跟手）
     document.addEventListener('pointerdown', function (e) {
-      var el = e.target && e.target.closest ? e.target.closest(buzzSel) : null;
-      if (el) buzz(10);
+      var el = e.target && e.target.closest ? e.target.closest(TAP_SEL) : null;
+      if (el) play('tap', el);
     }, { passive: true });
 
-    // 背单词三档评分：点下去卡片弹一下 + 方向性飞出
+    // iOS 首次手势解锁音频，并预热触觉通道
+    var once = function () {
+      unlock();
+      try { if (isIOS) iosHapticInit(); } catch (e) {}
+      document.removeEventListener('pointerdown', once);
+    };
+    document.addEventListener('pointerdown', once, { passive: true });
+
+    // 背单词三档评分
     document.addEventListener('click', function (e) {
       var b = e.target && e.target.closest ? e.target.closest('.w-btn') : null;
       if (!b) return;
       var card = document.querySelector('.w-card');
+      var kind = 'meh';
+      if (b.classList.contains('good')) kind = 'good';
+      else if (b.classList.contains('again')) kind = 'bad';
+      play(kind, card);
       if (!card) return;
-      buzz(18);
       card.classList.remove('apfx-pop', 'apfx-out-l', 'apfx-out-r');
-      void card.offsetWidth;                       // 强制重排，让动画可重复触发
-      // 认识 → 往右飞；不认识 → 往左飞；其余原地弹
-      if (b.classList.contains('good')) card.classList.add('apfx-out-r');
-      else if (b.classList.contains('again')) card.classList.add('apfx-out-l');
+      void card.offsetWidth;
+      if (kind === 'good') card.classList.add('apfx-out-r');
+      else if (kind === 'bad') card.classList.add('apfx-out-l');
       else card.classList.add('apfx-pop');
       setTimeout(function () {
         card.classList.remove('apfx-pop', 'apfx-out-l', 'apfx-out-r');
       }, 480);
     }, false);
 
-    // 数字变化弹一下：观察统计数值的变动
-    var watched = '.stat b,.hstat b';
+    // 统计数字变化弹一下
     var mo = global.MutationObserver ? new MutationObserver(function (list) {
       list.forEach(function (m) {
         var el = m.target;
         if (!el || !el.closest) return;
-        if (!el.closest(watched)) return;
+        if (!el.closest('.stat b,.hstat b,.ip-sc b')) return;
         el.classList.remove('apfx-bump');
         void el.offsetWidth;
         el.classList.add('apfx-bump');
@@ -10194,7 +10367,7 @@ window.IELTS_START_SOUND = 'data:audio/mp4;base64,AAAAHGZ0eXBNNEEgAAACAE00QSBpc2
       });
     }) : null;
     if (mo) {
-      document.querySelectorAll(watched).forEach(function (el) {
+      document.querySelectorAll('.stat b,.hstat b,.ip-sc b').forEach(function (el) {
         mo.observe(el, { childList: true, characterData: true, subtree: true });
       });
     }
@@ -10209,6 +10382,34 @@ window.IELTS_START_SOUND = 'data:audio/mp4;base64,AAAAHGZ0eXBNNEEgAAACAE00QSBpc2
   } else {
     setTimeout(run, 0);
   }
+
+  /* ---------- 对外接口：供面板开关与完成提示调用 ---------- */
+  global.IeltsFX = {
+    play:    play,
+    unlock:  unlock,
+    isIOS:   function () { return isIOS; },
+    /* 有没有可用的触觉通道：安卓走马达，iOS 走系统兼容方式 */
+    hapticSupported: function () {
+      if (!isIOS) return !!(global.navigator && global.navigator.vibrate);
+      return swOK || !!document.createElement('input');
+    },
+    /* iOS 上说明的是"兼容方式"，不假装跟安卓一样 */
+    hapticLabel: function () {
+      if (isIOS) return '震动反馈（iPhone 兼容模式）';
+      if (global.navigator && global.navigator.vibrate) return '震动反馈';
+      return '震动反馈（本设备不支持）';
+    },
+    /* iOS 需要在真实用户手势里预热一次，之后才可能出反馈 */
+    warm: function () { try { iosHapticInit(); } catch (e) {} },
+    soundOn:  function () { return cfg.sound; },
+    hapticOn: function () { return cfg.haptic; },
+    setSound: function (v) { cfg.sound = !!v; save(); if (v) { unlock(); play('tick'); } },
+    setHaptic: function (v) {
+      cfg.haptic = !!v; save();
+      if (!v) return;
+      if (isIOS) { try { iosTap(1); } catch (e) {} } else vibrate(HAP.tap);
+    }
+  };
 })(window);
 
 /*!
