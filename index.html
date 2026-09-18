@@ -392,7 +392,7 @@ details.custom textarea:focus{border-color:var(--brand)}
 
 <header class="topbar">
   <div class="logo">雅</div>
-  <div class="brand"><b>雅思单词记忆</b><span>IELTS Computer-Based Typing Trainer</span></div>
+  <div class="brand"><b>个人信息</b><span>6000 词库 · 遗忘曲线</span></div>
   <div class="top-right">纯本地运行 · 成绩自动保存</div>
 </header>
 
@@ -413,7 +413,7 @@ details.custom textarea:focus{border-color:var(--brand)}
     </div>
 
     <div class="mode-cards" id="mode-cards" style="grid-template-columns:1fr">
-      <button class="mode-card active" data-mode="words"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 4l1.9 4.8L18.5 10l-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z"/><path d="M18.5 15.5l.9 2.2 2.1.8-2.1.9-.9 2.1-.8-2.1-2.2-.9 2.2-.8z"/></svg></div><h3>单词记忆</h3><p>仿红杉树单词王：6000 雅思词库（核心精选 + 全词库），记忆引擎按遗忘曲线安排复习。</p><span class="mode-live" id="live-words"></span></button>
+      <button class="mode-card active" data-mode="words"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 4l1.9 4.8L18.5 10l-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z"/><path d="M18.5 15.5l.9 2.2 2.1.8-2.1.9-.9 2.1-.8-2.1-2.2-.9 2.2-.8z"/></svg></div><h3>单词记忆</h3><p>6000 雅思词库（核心精选 + 全词库），记忆引擎按遗忘节律安排复习。</p><span class="mode-live" id="live-words"></span></button>
     </div>
 
     <div class="panel">
@@ -566,7 +566,7 @@ details.custom textarea:focus{border-color:var(--brand)}
       <div class="w-hero">
         <div>
           <h2>今日任务</h2>
-          <p>像红杉树单词王一样：记住的词少出现，快忘的词马上来，拼错的词自动进生词本。点右侧的数字可直接开始对应练习。</p>
+          <p>记住的词少出现，快忘的词马上来，拼错的词自动进生词本。点右侧的数字可直接开始对应练习。</p>
         </div>
         <div class="w-hero-r">
           <div class="w-stat click" id="w-stat-due" title="点击直接复习到期的词"><i>待复习</i><b id="w-due">0</b></div>
@@ -577,10 +577,11 @@ details.custom textarea:focus{border-color:var(--brand)}
       <div class="w-actions">
         <button class="btn primary big" id="btn-w-start">开始今日学习</button>
         <button class="btn" id="btn-w-book">生词本（<span id="w-book-n">0</span>）</button>
-        <label class="w-daily" style="margin-left:0">复习方向
+                <label class="w-daily" style="margin-left:0">练习方式
           <select id="w-dir" class="sel">
-            <option value="en2zh" selected>英 → 中</option>
-            <option value="zh2en">中 → 英</option>
+            <option value="mix" selected>智能 · 自适应</option>
+            <option value="zh2en">只写英文</option>
+            <option value="en2zh">只写中文</option>
           </select>
         </label>
         <label class="w-daily">每日新词
@@ -7897,25 +7898,67 @@ function speakEn(text){
   u.rate = 0.85;
   speechSynthesis.speak(u);
 }
-function gradeWord(id, g){
-  const day = 864e5;
-  const r = WREC[id] || { s: 20, stage: 0, due: 0, lapses: 0 };
-  const iv = [1, 2, 4, 7, 15, 30, 60, 90];
-  if(g === 2){
-    r.stage = Math.min(7, r.stage + 1);
-    r.s = Math.min(100, r.s + Math.max(10, 30 - r.stage * 4));
-    r.due = Date.now() + iv[r.stage] * day;
-  }else if(g === 1){
-    r.s = Math.min(100, r.s + 8);
-    r.due = Date.now() + Math.max(20 * 6e4, iv[Math.min(7, r.stage)] * day * 0.6);
-  }else{
+/* ================= 记忆引擎 v2 =================
+ * 间隔从分钟级起步，覆盖「学后当天」这段遗忘最陡的区间；
+ * 进入天级后加速舒张，越记越牢就见得越少。
+ */
+const ME_IV = [
+  5 * 6e4,   25 * 6e4,   2 * 36e5,   7 * 36e5,      // 0-3  学后 24 小时内
+  18 * 36e5, 2 * 864e5,  4 * 864e5,  9 * 864e5,     // 4-7  天级起步
+  18 * 864e5, 35 * 864e5, 70 * 864e5, 150 * 864e5   // 8-11 加速舒张
+];
+const ME_TOP = 11;
+function meBudget(id){                     // 反应时间预算：词越长，给的思考时间越多
+  const w = WMAP[id];
+  const n = (w && w.en && w.en.length) || 6;
+  return 900 + n * 130;
+}
+function meTier(r){                        // 生词 / 夹生词 / 熟词
+  if(!r || !r.seen) return 'new';
+  if(r.s >= 72 && r.stage >= 8) return 'known';
+  return 'vague';
+}
+function dueText(ts){
+  const d = ts - Date.now();
+  if(d <= 6e4) return '马上';
+  if(d < 36e5) return Math.max(1, Math.round(d / 6e4)) + ' 分钟后';
+  if(d < 864e5) return (Math.round(d / 36e5 * 10) / 10) + ' 小时后';
+  return Math.max(1, Math.round(d / 864e5)) + ' 天后';
+}
+function gradeWord(id, g, rt){
+  const now = Date.now();
+  const r = WREC[id] || { s: 20, stage: 0, due: 0, lapses: 0, seen: 0, rt: 0 };
+  r.seen = (r.seen || 0) + 1;
+
+  // 反应时间：平滑进历史均值，抗单次抖动
+  if(typeof rt === 'number' && rt > 300){
+    const t = Math.min(20000, rt);
+    r.rt = r.rt ? Math.round(r.rt * 0.7 + t * 0.3) : t;
+  }
+  const fast = !r.rt || r.rt <= meBudget(id);   // 想得快 = 真记住了
+
+  if(g === 2){                                   // 认识
+    if(fast){
+      r.stage = Math.min(ME_TOP, r.stage + 1);
+      r.s = Math.min(100, r.s + Math.max(9, 26 - r.stage * 2));
+      r.due = now + ME_IV[r.stage];
+    }else{
+      // 想起来了但反应偏慢 —— 停在原级、间隔打折，别急着放长
+      r.s = Math.min(100, r.s + 11);
+      r.due = now + Math.max(4 * 6e4, ME_IV[Math.min(ME_TOP, r.stage)] * 0.55);
+    }
+  }else if(g === 1){                             // 模糊
+    r.s = Math.min(100, r.s + 7);
+    r.due = now + Math.max(3 * 6e4, ME_IV[Math.min(ME_TOP, r.stage)] * 0.45);
+  }else{                                         // 忘记
     r.stage = Math.max(0, r.stage - 2);
-    r.s = Math.max(5, r.s - 35);
+    r.s = Math.max(5, r.s - 32);
     r.lapses = (r.lapses || 0) + 1;
-    r.due = Date.now() + 10 * 6e4;
+    r.due = now + 4 * 6e4;                       // 刚忘的窗口期，马上补一次
   }
   WREC[id] = r;
   store.set('ieltsType.words', WREC);
+  return r;
 }
 $('#w-daily').onchange = e => store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10);
 
@@ -8013,10 +8056,10 @@ function renderWordsHome(){
   MARKS = store.get('ieltsType.marks', []);
   const due = WORDS.filter(w => WREC[w.id] && WREC[w.id].due <= Date.now()).length;
   const fresh = WORDS.filter(w => !WREC[w.id]).length;
-  const mastered = WORDS.filter(w => WREC[w.id] && WREC[w.id].stage >= 5).length;
+  const mastered = WORDS.filter(w => WREC[w.id] && WREC[w.id].stage >= 8).length;
   const bookSet = new Set();
-  WORDS.forEach(w => { const r = WREC[w.id]; if(r && r.lapses > 0 && r.stage < 5) bookSet.add(w.id); });
-  MARKS.forEach(id => { const r = WREC[id]; if(WMAP[id] && !(r && r.stage >= 5)) bookSet.add(id); });
+  WORDS.forEach(w => { const r = WREC[w.id]; if(r && r.lapses > 0 && r.stage < 8) bookSet.add(w.id); });
+  MARKS.forEach(id => { const r = WREC[id]; if(WMAP[id] && !(r && r.stage >= 8)) bookSet.add(id); });
   const book = bookSet.size;
   $('#w-due').textContent = due;
   $('#w-new').textContent = fresh;
@@ -8036,7 +8079,7 @@ function renderWordsHome(){
     if(wBookFilter === 'ext' && i < 10) return;
     const ws = WORDS.filter(w => w.list === i);
     const learnedN = ws.filter(w => WREC[w.id]).length;
-    const masteredN = ws.filter(w => WREC[w.id] && WREC[w.id].stage >= 5).length;
+    const masteredN = ws.filter(w => WREC[w.id] && WREC[w.id].stage >= 8).length;
     const div = document.createElement('div');
     div.className = 'w-list';
     div.innerHTML = '<h4>List ' + (i + 1) + ' · ' + esc(l.name) + '</h4>'
@@ -8050,7 +8093,7 @@ function renderWordsHome(){
   $('#w-stat-done').onclick = showMastered;
 }
 function showMastered(){
-  const mastered = WORDS.filter(w => WREC[w.id] && WREC[w.id].stage >= 5);
+  const mastered = WORDS.filter(w => WREC[w.id] && WREC[w.id].stage >= 8);
   if(!mastered.length){ toast('还没有掌握的词 —— 复习时连续点「认识」就能升级'); return; }
   showModal('<h3>已掌握 ' + mastered.length + ' 词</h3>'
     + '<div class="kv" style="max-height:320px;overflow:auto">' + mastered.map(w => '<span class="miss-chip ok">' + esc(w.en) + '</span>').join(' ') + '</div>'
@@ -8094,13 +8137,14 @@ function startSession(listIdx, only){
 function renderTask(){
   if(wSess.i >= wSess.q.length){ finishSession(); return; }
   const t = wSess.q[wSess.i];
+  wSess.tShown = Date.now();
   const w = WMAP[t.id];
   const r = WREC[t.id] || { s: 0 };
   $('#w-st-bar').style.width = Math.round(wSess.done / wSess.q.length * 100) + '%';
   islandSet('', '单词 ' + (wSess.i + 1) + '/' + wSess.q.length + ' · ' + Math.round(wSess.done / wSess.q.length * 100) + '%', 'words');
   const card = $('#w-card');
   if(t.kind === 'recall'){
-    const zh2en = store.get('ieltsType.wDir', 'en2zh') === 'zh2en';
+    const _d = nextDir(t.id); t.dir = _d; const zh2en = (_d === 'en');
     if(zh2en){
       card.innerHTML =
         '<div class="w-kind">复习 · 中→英 · 记忆强度 ' + (r.s || 0) + '%</div>'
@@ -8164,7 +8208,12 @@ function renderTask(){
   }else renderSpell(t);
 }
 function gradeRecall(t, g){
-  gradeWord(t.id, g);
+  const _rt = wSess.tShown ? (Date.now() - wSess.tShown) : 0;
+  const _r = gradeWord(t.id, g, _rt);
+  if(_r) toast(g === 0 ? '忘记 → ' + dueText(_r.due) + '重来'
+             : g === 1 ? '模糊 → ' + dueText(_r.due) + '再见'
+             : '认识 → ' + dueText(_r.due) + '再见', 1500);
+  if(t.dir) markDir(t.id, t.dir, g === 2);
   wSess.stat.rv++;
   if(g === 1) wSess.q.push({ id: t.id, kind: 'spell' });
   if(g === 0){
@@ -8173,41 +8222,147 @@ function gradeRecall(t, g){
   }
   wSess.done++; wSess.i++; renderTask();
 }
+/* ---------- 交替方向：这次写英文，下次写中文 ---------- */
+function wDirMode(){ return store.get('ieltsType.wDir', 'mix'); }
+/* 智能方向决策：这个词现在缺什么，就考什么。
+ * 优先级：新词 → 上次没答对（不换方向） → 易错词主攻拼写 → 熟词主攻义项 → 常规交替
+ * 返回 { dir:'en'|'zh', why:'卡片上显示的原因' }
+ */
+function smartDir(id){
+  const r = WREC[id];
+  const seen = (r && r.seen) || 0;
+  const stage = (r && r.stage) || 0;
+  const lapses = (r && r.lapses) || 0;
+  const lastDir = (r && r.dir) || '';
+  const enRun = (r && r.enRun) || 0;          // 连续写英文次数
+  const zhRun = (r && r.zhRun) || 0;          // 连续写中文次数
+
+  // ① 新词：先建立"形→义"的拼写
+  if(!r || seen <= 1) return { dir: 'en', why: '新词先记拼写' };
+
+  // ② 上次没答对 → 保持原方向，别绕着难点走
+  if(r.lastBad && lastDir) {
+    return { dir: lastDir, why: '上次没答对，同方向巩固' };
+  }
+
+  // ③ 易错词（忘过 2 次以上、还没站稳）→ 主攻拼写
+  if(lapses >= 2 && stage < 4){
+    if(enRun >= 2) return { dir: 'zh', why: '易错词 · 换手感测义项' };
+    return { dir: 'en', why: '易错词主攻拼写' };
+  }
+
+  // ④ 熟词（已站稳）→ 主攻义项，防"认得但说不出意思"
+  if(stage >= 8){
+    if(zhRun >= 1) return { dir: 'en', why: '已掌握 · 保持拼写手感' };
+    return { dir: 'zh', why: '已掌握主攻义项' };
+  }
+
+  // ⑤ 中间地带：正常交替
+  return { dir: lastDir === 'en' ? 'zh' : 'en', why: '' };
+}
+function nextDir(id){
+  const m = wDirMode();
+  if(m === 'zh2en') return 'en';                                  // 只写英文
+  if(m === 'en2zh') return 'zh';                                  // 只写中文
+  return smartDir(id).dir;                                        // 智能自适应
+}
+function dirWhy(id){
+  if(wDirMode() !== 'mix') return '';
+  return smartDir(id).why;
+}
+function markDir(id, dir, ok){
+  const r = WREC[id] || { s: 20, stage: 0, due: 0, lapses: 0, seen: 0, rt: 0 };
+  // 走到这一步说明这个词已经完整考过一轮（新词入册 + 至少一次复习），
+  // 因此保底记 2 次，避免被误判成新词而永远只考英文
+  if((r.seen || 0) < 2) r.seen = 2;
+  r.dir = dir;
+  r.lastBad = ok ? 0 : 1;                    // 这次有没有答对
+  if(dir === 'en'){ r.enRun = (r.enRun || 0) + 1; r.zhRun = 0; }
+  else           { r.zhRun = (r.zhRun || 0) + 1; r.enRun = 0; }
+  WREC[id] = r;
+  store.set('ieltsType.words', WREC);
+}
+/* 中文释义校验：去括号标点后比对；标准释义按分隔符切成义项，命中任一即可 */
+function zhNorm(s){
+  return (s || '').replace(/[（(][^）)]*[）)]/g, '')
+    .replace(/[\s;；,，.。、\/｜|·"'“”‘’!！?？:：]+/g, '').toLowerCase();
+}
+function zhHit(input, std){
+  const a = zhNorm(input);
+  if(!a) return false;
+  const b = zhNorm(std);
+  if(!b) return false;
+  if(a === b) return true;
+  const parts = std.split(/[;；,，。\/]/).map(zhNorm).filter(Boolean);
+  for(const p of parts){
+    if(p === a) return true;
+    if(a.length >= 2 && p.indexOf(a) === 0) return true;          // 写了释义的开头几个字
+  }
+  // 连写多个义项（如「放弃抛弃」）也算对
+  let rest = a, guard = 0;
+  while(rest.length && guard++ < 12){
+    const hit = parts.filter(p => p && rest.indexOf(p) === 0)
+                     .sort((x, y) => y.length - x.length)[0];
+    if(!hit) break;
+    rest = rest.slice(hit.length);
+  }
+  return rest.length === 0;
+}
 function renderSpell(t){
   const w = WMAP[t.id];
   const isNew = t.kind === 'new-spell';
+  t.dir = isNew ? 'en' : nextDir(t.id);
+  const _why = isNew ? '' : dirWhy(t.id);
+  const toZh = t.dir === 'zh';                    // 看英文 → 写中文
   const card = $('#w-card');
   card.innerHTML =
-    '<div class="w-kind">' + (isNew ? '新词拼写' : '拼写强化') + '</div>'
-    + '<div class="w-zh" style="font-size:20px">' + esc(w.zh) + '</div>'
-    + '<div class="w-ipa">' + esc(w.ipa) + '</div>'
-    + '<div><button class="w-say" id="w-say">' + ICO_SAY + '</button></div>'
-    + '<div class="w-note">听发音、看中文，把单词拼出来（' + w.en.length + ' 个字符）</div>'
-    + '<input class="w-spell-in" id="w-in" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="type the word...">'
+    '<div class="w-kind">' + (isNew ? '新词拼写' : '拼写强化') + (toZh ? ' · 写中文' : ' · 写英文')
+    + (_why ? ' · ' + _why : '') + '</div>'
+    + (toZh
+        ? '<div class="w-word">' + esc(w.en) + '</div>'
+          + '<div class="w-ipa">' + esc(w.ipa) + '</div>'
+          + '<div><button class="w-say" id="w-say">' + ICO_SAY + '</button></div>'
+          + '<div class="w-note">看英文，把中文意思写出来</div>'
+        : '<div class="w-zh" style="font-size:20px">' + esc(w.zh) + '</div>'
+          + '<div class="w-ipa">' + esc(w.ipa) + '</div>'
+          + '<div><button class="w-say" id="w-say">' + ICO_SAY + '</button></div>'
+          + '<div class="w-note">听发音、看中文，把单词拼出来（' + w.en.length + ' 个字符）</div>')
+    + '<input class="w-spell-in" id="w-in" autocomplete="off"'
+    + (toZh ? '' : ' autocapitalize="off" spellcheck="false"')
+    + ' placeholder="' + (toZh ? '输入中文意思…' : 'type the word...') + '">'
     + '<div id="w-fb"></div>'
     + '<div class="w-ops"><button class="w-btn plain" id="w-check">检查 (Enter)</button></div>';
   $('#w-say').onclick = () => speakEn(w.en);
   $('#w-check').onclick = () => checkSpell(t);
-  $('#w-in').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); checkSpell(t); } });
+  // 中文输入法打字时按 Enter 是"选词"，不能当成提交
+  $('#w-in').addEventListener('keydown', e => {
+    if(e.key === 'Enter' && !e.isComposing){ e.preventDefault(); checkSpell(t); }
+  });
   setTimeout(() => $('#w-in').focus(), 50);
   speakEn(w.en);
 }
 function checkSpell(t){
   const w = WMAP[t.id];
   const input = $('#w-in');
-  const val = input.value.trim().toLowerCase().replace(/\s+/g, ' ');
-  if(!val) return;
+  const raw = input.value.trim().replace(/\s+/g, ' ');
+  if(!raw) return;
   t.tries = (t.tries || 0) + 1;
-  if(val === w.en.toLowerCase()){
+  const toZh = t.dir === 'zh';
+  const hit = toZh ? zhHit(raw, w.zh) : (raw.toLowerCase() === w.en.toLowerCase());
+  if(hit){
     if(t.tries === 1) wSess.stat.first++;
-    $('#w-fb').innerHTML = '<div class="w-fb ok">✓ 拼写正确！' + (t.tries === 1 ? '一次通过' : '') + '</div>';
+    $('#w-fb').innerHTML = '<div class="w-fb ok">✓ 正确！' + (t.tries === 1 ? '一次通过' : '')
+      + (toZh ? '&nbsp;&nbsp;参考释义：' + esc(w.zh) : '') + '</div>';
     if(t.kind === 'new-spell'){
       wSess.stat.nw++;
-      WREC[t.id] = { s: t.tries === 1 ? 45 : 20, stage: 0, due: Date.now() + (t.tries === 1 ? 864e5 : 10 * 6e4), lapses: 0, seen: 1 };
+      WREC[t.id] = { s: t.tries === 1 ? 48 : 22, stage: 0,
+        due: Date.now() + (t.tries === 1 ? 25 * 6e4 : 5 * 6e4), lapses: 0, seen: 1, rt: 0, dir: 'en',
+        enRun: 1, zhRun: 0, lastBad: 0 };
       store.set('ieltsType.words', WREC);
     }else{
       wSess.stat.spell++;
       gradeWord(t.id, t.tries === 1 ? 2 : 1);
+      markDir(t.id, t.dir, t.tries === 1);      // 一次通过 = 答对
     }
     $('#w-check').disabled = true;
     input.disabled = true;
@@ -8215,7 +8370,10 @@ function checkSpell(t){
     setTimeout(() => { wSess.i++; renderTask(); }, 650);
   }else if(!t.revealed){
     t.revealed = true;
-    $('#w-fb').innerHTML = '<div class="w-fb bad">✗ 拼错了。正确拼写：<span class="fix">' + esc(w.en) + '</span> —— 请照着再打一遍</div>';
+    $('#w-fb').innerHTML = '<div class="w-fb bad">✗ '
+      + (toZh ? '还不对。参考释义：<span class="fix">' + esc(w.zh) + '</span> —— 请照着再打一遍'
+              : '拼错了。正确拼写：<span class="fix">' + esc(w.en) + '</span> —— 请照着再打一遍')
+      + '</div>';
     input.value = '';
     input.focus();
   }
@@ -8234,7 +8392,7 @@ function finishSession(){
     + '<div class="bigstat"><i>复习</i><b>' + st.rv + '</b><i>次</i></div>'
     + '<div class="bigstat"><i>拼写一次通过</i><b>' + rate + '%</b><i>&nbsp;</i></div>'
     + '</div>'
-    + '<div class="kv">记忆引擎已为每个单词排好下次复习时间：认识 → 间隔拉长；忘记 → 很快再见。明天记得回来打卡！</div>'
+    + '<div class="kv">记忆引擎已为每个单词排好下次复习点：脱口而出 → 间隔拉长；犹豫或忘记 → 很快再见。</div>'
     + '<div class="modal-actions">'
     + '<button class="btn primary" data-act="w-again">继续学习</button>'
     + '<button class="btn" data-act="w-home">返回单词首页</button>'
@@ -8246,8 +8404,8 @@ function renderBook(){
   MARKS = store.get('ieltsType.marks', []);
   const list = WORDS.filter(w => {
     const r = WREC[w.id];
-    if(MARKS.includes(w.id) && !(r && r.stage >= 5)) return true;
-    return !!(r && r.lapses > 0 && r.stage < 5);
+    if(MARKS.includes(w.id) && !(r && r.stage >= 8)) return true;
+    return !!(r && r.lapses > 0 && r.stage < 8);
   }).sort((a, b) => {
     const la = WREC[a.id] ? WREC[a.id].lapses : 0, lb = WREC[b.id] ? WREC[b.id].lapses : 0;
     const sa = WREC[a.id] ? WREC[a.id].s : 0, sb = WREC[b.id] ? WREC[b.id].s : 0;
@@ -8279,7 +8437,7 @@ $('#btn-w-book-back').onclick = () => { renderWordsHome(); wShow('home'); };
 $('#btn-w-exit').onclick = () => { renderWordsHome(); wShow('home'); };
 $('#w-daily').value = String(store.get('ieltsType.wordsDaily', 10));
 $('#w-daily').onchange = e => store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10);
-$('#w-dir').value = store.get('ieltsType.wDir', 'en2zh');
+$('#w-dir').value = store.get('ieltsType.wDir', 'mix');
 $('#w-dir').onchange = e => store.set('ieltsType.wDir', e.target.value);
 
 /* ================= 阅读理解引擎 ================= */
@@ -9706,14 +9864,161 @@ window.IELTS_START_SOUND = 'data:audio/mp4;base64,AAAAHGZ0eXBNNEEgAAACAE00QSBpc2
     global.IeltsProfile.__wrapped = true;
   }
 
-  /* ---------- 6. 顶栏副标题 ---------- */
-  function retitleBrand() {
-    var b = document.querySelector('.brand b');
-    if (b) b.textContent = '雅思单词记忆';
+  /* ---------- 6. 顶栏：改成真正的「个人信息」 ---------- */
+  var SUB_FALLBACK = '6000 词库 · 遗忘曲线';
+
+  function brandStyle() {
+    if (document.getElementById('brand-me-css')) return;
+    var c = document.createElement('style');
+    c.id = 'brand-me-css';
+    c.textContent = [
+      '.brand{cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;',
+      '  border-radius:12px;padding:4px 8px;margin:-4px -8px;',
+      '  transition:background .2s cubic-bezier(.4,0,.2,1)}',
+      '.brand:hover{background:rgba(0,0,0,.045)}',
+      '.brand:active{background:rgba(0,0,0,.075)}',
+      '.brand b{display:flex;align-items:center;gap:3px}',
+      '.brand b .arw{opacity:.35;font-weight:400;font-size:11px;transition:transform .2s}',
+      '.brand:hover b .arw{opacity:.7;transform:translateX(2px)}',
+      /* 副标题里的数字：做成小徽章，一眼看到关键数据 */
+      '.brand span i{font-style:normal;font-weight:600;color:var(--ink,#1d1d1f);',
+      '  font-variant-numeric:tabular-nums}',
+      '.brand span .dot{opacity:.4;margin:0 5px}'
+    ].join('');
+    document.head.appendChild(c);
+  }
+
+  /* 副标题：未登录显示词库介绍，登录后显示这个人的真实状态 */
+  function brandSub() {
+    try {
+      var st = global.IeltsLogin && global.IeltsLogin.status ? global.IeltsLogin.status() : null;
+      if (!st || !st.logged) return SUB_FALLBACK;
+      var s = global.IeltsProfile && global.IeltsProfile.stats ? global.IeltsProfile.stats() : null;
+      if (!s) return SUB_FALLBACK;
+      var ck = s.checkin || {}, w = s.words || {};
+      var p = [];
+      if (ck.streak > 0) p.push('连续 <i>' + parseInt(ck.streak, 10) + '</i> 天');
+      else if (ck.days > 0) p.push('打卡 <i>' + parseInt(ck.days, 10) + '</i> 天');
+      if (w.learned > 0) p.push('已学 <i>' + parseInt(w.learned, 10) + '</i> 词');
+      if (w.due > 0) p.push('待复习 <i>' + parseInt(w.due, 10) + '</i>');
+      if (!p.length) return '还没开始背 · 点这里看成就';
+      return p.join('<span class="dot">·</span>');
+    } catch (e) { return SUB_FALLBACK; }
+  }
+
+  function refreshBrandSub() {
     var s = document.querySelector('.brand span');
-    if (s) s.textContent = '6000 词库 · 遗忘曲线';
+    if (s) s.innerHTML = brandSub();
+  }
+
+  function retitleBrand() {
+    brandStyle();
+    var b = document.querySelector('.brand b');
+    if (b) {
+      b.innerHTML = '个人信息<span class="arw">›</span>';
+      b.title = '查看我的打卡、成就与数据';
+    }
+    // 整个品牌区（标题 + 副标题）都能点，不只是那四个字
+    var brand = document.querySelector('.brand');
+    if (brand && !brand.__me) {
+      brand.__me = true;
+      brand.onclick = function () {
+        try { if (global.IeltsLogin && global.IeltsLogin.me) global.IeltsLogin.me(); } catch (e) {}
+      };
+    }
+    refreshBrandSub();
+    // 学习过程中数据在变，副标题跟着走（只读本地存储，开销极小）
+    setInterval(function () {
+      try { refreshBrandSub(); } catch (e) {}
+    }, 15000);
+    // 浏览器标签页仍显示应用名，方便在标签里认出本站
     var t = document.querySelector('title');
     if (t) t.textContent = '雅思单词记忆';
+  }
+
+  /* ---------- 7. 头像整合到 logo，去掉右侧重复的入口 ---------- */
+  var AV_KEY = 'ielts_avatars_v1';
+
+  function esc2(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function logoStyle() {
+    if (document.getElementById('logo-av-css')) return;
+    var c = document.createElement('style');
+    c.id = 'logo-av-css';
+    c.textContent = [
+      /* 头像直接顶替原来的「雅」字方块 */
+      '.logo{padding:0;overflow:hidden;flex:none;',
+      '  display:flex;align-items:center;justify-content:center;',
+      '  transition:transform .3s cubic-bezier(.34,1.56,.64,1),box-shadow .2s}',
+      '.logo img{width:100%;height:100%;object-fit:cover;display:block}',
+      '.logo .lg-emi{font-style:normal;font-size:19px;line-height:1}',
+      '.logo .lg-txt{font-style:normal;font-size:15px;font-weight:700;line-height:1}',
+      '.logo.plain .lg-txt{font-size:14px}',
+      '@media(hover:hover){.logo:hover{transform:scale(1.06)}}',
+      '.logo:active{transform:scale(.94)}'
+    ].join('');
+    document.head.appendChild(c);
+  }
+
+  /* 把当前账号的头像画进 logo；没设头像就退回名字首字 / 「雅」 */
+  function syncLogo() {
+    var logo = document.querySelector('.logo');
+    if (!logo) return;
+
+    var name = '', av = null;
+    try {
+      var st = global.IeltsLogin && global.IeltsLogin.status ? global.IeltsLogin.status() : null;
+      if (st && st.logged) name = st.name || '';
+    } catch (e) {}
+    try {
+      if (name) {
+        var all = JSON.parse(localStorage.getItem(AV_KEY) || '{}');
+        av = all[name] || null;
+      }
+    } catch (e) {}
+
+    var html, plain = false;
+    if (av && av.type === 'img' && av.v) {
+      html = '<img src="' + esc2(av.v) + '" alt="">';
+    } else if (av && av.type === 'emoji' && av.v) {
+      html = '<i class="lg-emi">' + esc2(av.v) + '</i>';
+    } else if (name) {
+      html = '<i class="lg-txt">' + esc2(String(name).trim().slice(0, 1) || '?') + '</i>';
+      plain = true;
+    } else {
+      html = '雅';
+      plain = true;
+    }
+
+    if (logo.__h !== html) {
+      logo.innerHTML = html;
+      logo.__h = html;
+    }
+    logo.classList[plain ? 'add' : 'remove']('plain');
+
+    // 整合：右侧那个「头像 + 名字」胶囊不再需要，功能已由顶栏承担
+    var e = document.getElementById('lg-entry');
+    if (e && e.style.display !== 'none') e.style.display = 'none';
+  }
+
+  function bindLogo() {
+    logoStyle();
+    var logo = document.querySelector('.logo');
+    if (logo && !logo.__me) {
+      logo.__me = true;
+      logo.title = '查看我的打卡、成就与数据';
+      logo.style.cursor = 'pointer';
+      logo.onclick = function () {
+        try { if (global.IeltsLogin && global.IeltsLogin.me) global.IeltsLogin.me(); } catch (e) {}
+      };
+    }
+    syncLogo();
+    // 头像随时可能在面板里改，隔一会儿同步一次（只读本地存储，开销极小）
+    setInterval(function () { try { syncLogo(); } catch (e) {} }, 1200);
   }
 
   function run() {
@@ -9724,6 +10029,7 @@ window.IELTS_START_SOUND = 'data:audio/mp4;base64,AAAAHGZ0eXBNNEEgAAACAE00QSBpc2
       retitle();
       trimHeroStats();
       retitleBrand();
+      bindLogo();
     } catch (e) {
       if (global.console) console.warn('[单词版]', e);
     }
