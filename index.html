@@ -402,13 +402,14 @@ details.custom textarea:focus{border-color:var(--brand)}
 .isl-plan-row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:5px 10px;background:rgba(255,255,255,.08);border-radius:9px}
 .isl-plan-row span{color:rgba(255,255,255,.85)}
 .isl-plan-row b{font-weight:600;color:#fff;font-variant-numeric:tabular-nums;font-size:12.5px}
+.isl-heat-cap{display:flex;justify-content:space-between;align-items:baseline;font-size:10.5px;color:rgba(255,255,255,.5);margin-bottom:5px}
+.isl-heat-cap b{color:rgba(255,255,255,.85);font-weight:600;font-variant-numeric:tabular-nums}
 .isl-plan-heat{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:10px}
-.iph{aspect-ratio:1;border-radius:3px;background:rgba(255,255,255,.1);cursor:default;transition:transform .15s}
+.iph{height:15px;border-radius:4px;background:rgba(255,255,255,.07);display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;color:rgba(255,255,255,.42);font-variant-numeric:tabular-nums;cursor:default;transition:transform .15s}
 .iph:hover{transform:scale(1.15)}
-.iph.ph{background:transparent}
-.iph.lv1{background:rgba(255,255,255,.22)}
-.iph.lv2{background:#34c759}
-.iph.lv3{background:#0ab84a}
+.iph.part{background:rgba(74,163,255,.32);color:rgba(255,255,255,.9)}
+.iph.ok{background:#34c759;color:#fff;font-weight:700}
+.iph.today{box-shadow:0 0 0 1px rgba(255,255,255,.6)}
 .isl-plan-sets{display:flex;gap:10px;align-items:center;margin-bottom:8px}
 .isl-plan-sets label{font-size:11px;color:rgba(255,255,255,.75);display:flex;align-items:center;gap:4px}
 .isl-sel,.isl-time{padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.12);color:#fff;font-size:11px;font-family:inherit;outline:none}
@@ -8893,6 +8894,19 @@ function islandPulse(){
   void el.offsetWidth;
   el.classList.add('pulse');
 }
+/* 面板高度按内容自适应，避免内容被 212px 高度裁掉 */
+function islandFit(){
+  const el = $('#island'), panel = $('#isl-panel');
+  if(!el || !panel) return;
+  const max = Math.max(160, window.innerHeight - 40);
+  el.style.height = Math.min(panel.scrollHeight, max) + 'px';
+}
+function islandClose(){
+  const el = $('#island');
+  el.classList.remove('open');
+  el.style.height = '';
+  island.open = false;
+}
 function islandRenderPanel(){
   if(island.mode === 'idle'){
     const p = getPlan();
@@ -8905,17 +8919,20 @@ function islandRenderPanel(){
     const learned = WORDS.filter(w => WREC[w.id]).length;
     const left = Math.max(0, p.goal - t.ans);
     const pct = Math.min(100, Math.round(t.ans / Math.max(1, p.goal) * 100));
-    /* 14 格迷你热力图：近两周，7×2 */
-    let heat = '';
+    /* 近 14 天打卡：达标打 ✓，练了未达标打 ·，今天描边 */
+    let heat = '', heatOk = 0;
     const nowD = new Date();
+    const WK = ['日','一','二','三','四','五','六'];
     for(let i = 13; i >= 0; i--){
       const d = new Date(nowD); d.setDate(d.getDate() - i);
       const dk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-      const rec = p.days[dk];
+      const rec = p.days[dk], ans = (rec && rec.ans) || 0, ok = !!(rec && rec.ok);
       let cls = '';
-      if(rec && rec.ok) cls = (rec.ans >= p.goal * 1.5 ? ' lv3' : ' lv2');
-      else if(rec && rec.ans > 0) cls = ' lv1';
-      heat += '<span class="iph' + cls + '" title="' + dk + ' · ' + ((rec && rec.ans) || 0) + ' 题"></span>';
+      if(ok){ cls = ' ok'; heatOk++; }
+      else if(ans > 0){ cls = ' part'; }
+      /* 格子里显示日期（几号），一眼能看出是每一天 */
+      heat += '<span class="iph' + cls + (i === 0 ? ' today' : '') + '" title="'
+        + dk + ' 周' + WK[d.getDay()] + ' · ' + ans + ' 题' + (ok ? ' · 已打卡' : '') + '">' + d.getDate() + '</span>';
     }
     $('#isl-panel').innerHTML =
       '<div class="isl-head">'
@@ -8929,6 +8946,7 @@ function islandRenderPanel(){
       +   '<div class="isl-plan-row"><span>✨ 新词目标</span><b>' + dailyNew + ' 个 · 已学 ' + t.nw + '</b></div>'
       +   '<div class="isl-plan-row"><span>🎯 答题目标</span><b>' + t.ans + ' / ' + p.goal + (t.ok ? ' ✓' : '') + '</b></div>'
       + '</div>'
+      + '<div class="isl-heat-cap"><span>近 14 天打卡</span><b>' + heatOk + ' 天达标</b></div>'
       + '<div class="isl-plan-heat">' + heat + '</div>'
       + '<div class="isl-plan-sets">'
       +   '<label>目标 <select class="plan-goal isl-sel">' + [10,20,30,50,100].map(n => '<option value="'+n+'"' + (n===p.goal?' selected':'') + '>'+n+'</option>').join('') + '</select></label>'
@@ -8952,9 +8970,10 @@ function islandRenderPanel(){
     });
     const startBtn = panel.querySelector('#isl-start');
     if(startBtn) startBtn.onclick = () => {
-      $('#island').classList.remove('open'); island.open = false;
+      islandClose();
       startSession();    // 默认今日学习（startSession 无参 = 全部词库）
     };
+    islandFit();
     return;   // idle 已处理，不走后面的通用渲染
   }
   const cells = [];
@@ -8978,25 +8997,25 @@ function islandRenderPanel(){
     + '<div class="isl-stats">' + cells.map(c => '<div class="isl-cell"><i>' + esc(c[0]) + '</i><b>' + esc(String(c[1])) + '</b></div>').join('') + '</div>'
     + '<div class="isl-btns"><button class="isl-btn ghost" data-isl="close">收起</button>'
     + '</div>';
+  islandFit();
 }
 /* 点击岛外任意处自动收起 */
 document.addEventListener('click', e => {
   if(island.open && !e.target.closest('#island')){
-    $('#island').classList.remove('open');
-    island.open = false;
+    islandClose();
   }
 });
 $('#island').addEventListener('click', e => {
   const act = e.target.closest('[data-isl]');
   if(act){
     e.stopPropagation();
-    if(act.dataset.isl === 'close'){ $('#island').classList.remove('open'); island.open = false; }
-    else if(act.dataset.isl === 'home'){ $('#island').classList.remove('open'); island.open = false; closeModal(); goHome(); }
+    if(act.dataset.isl === 'close'){ islandClose(); }
+    else if(act.dataset.isl === 'home'){ islandClose(); closeModal(); goHome(); }
     return;
   }
   island.open = !island.open;
   $('#island').classList.toggle('open', island.open);
-  if(island.open) islandRenderPanel();
+  if(island.open) islandRenderPanel(); else $('#island').style.height = '';
 });
 setInterval(() => { if(island.mode === 'idle') islandIdle(); }, 5000);
 islandIdle();
@@ -9066,7 +9085,7 @@ $('#modal').addEventListener('click', e => {
 /* ================= 全局事件 ================= */
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape'){
-    if($('#island').classList.contains('open')){ $('#island').classList.remove('open'); island.open = false; return; }
+    if($('#island').classList.contains('open')){ islandClose(); return; }
     if($('#modal').classList.contains('open')){ closeModal(); return; }
     if(curView !== 'home') goHome();
   }
