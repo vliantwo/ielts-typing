@@ -8905,11 +8905,10 @@ function islandRenderPanel(){
     const learned = WORDS.filter(w => WREC[w.id]).length;
     const left = Math.max(0, p.goal - t.ans);
     const pct = Math.min(100, Math.round(t.ans / Math.max(1, p.goal) * 100));
-    /* 30 格迷你热力图：末 30 格为近 30 天，前 5 格占位 */
+    /* 14 格迷你热力图：近两周，7×2 */
     let heat = '';
     const nowD = new Date();
-    for(let i = 34; i >= 0; i--){
-      if(i >= 30){ heat += '<span class="iph ph"></span>'; continue; }
+    for(let i = 13; i >= 0; i--){
       const d = new Date(nowD); d.setDate(d.getDate() - i);
       const dk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
       const rec = p.days[dk];
