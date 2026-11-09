@@ -7724,8 +7724,8 @@ function renderPlan(dueArg){
     +   '<label><input type="checkbox" class="plan-remind-on"' + (p.remindOn ? ' checked' : '') + '> 开启提醒</label>'
     + '</div>';
 }
-/* 事件委托：目标 / 提醒时间 / 提醒开关任一变更即写回并重渲染 */
-$('#plan-card').addEventListener('change', e => {
+/* 事件委托：目标 / 提醒时间 / 提醒开关任一变更即写回并重渲染（#plan-card 已移除，监听改绑到灵动岛面板内，此处加空值保护） */
+{ const _pc = $('#plan-card'); if(_pc) _pc.addEventListener('change', e => {
   const t = e.target;
   if(!t || !t.classList) return;
   const p = getPlan();
@@ -7735,7 +7735,7 @@ $('#plan-card').addEventListener('change', e => {
   else return;
   setPlan(p);
   renderPlan();
-});
+}); }
 /* 提醒定时器：30 秒检查一次，仅页面打开时有效，每天最多触发一次 */
 setInterval(() => {
   const p = getPlan();
