@@ -267,6 +267,25 @@ details.custom textarea:focus{border-color:var(--brand)}
 .w-btn:disabled{opacity:.4;cursor:default}
 .w-strength{max-width:320px;margin:18px auto 0;background:#e8e8ed;border-radius:99px;height:6px;overflow:hidden}
 .w-strength>div{height:100%;background:linear-gradient(90deg,var(--warn),var(--ok));transition:width .3s}
+
+/* ---------- 极速看词 ---------- */
+.sp-timer{height:6px;background:#e8e8ed;border-radius:99px;overflow:hidden;margin:20px auto 4px;max-width:420px}
+.sp-timer>div{height:100%;width:100%;border-radius:99px;background:linear-gradient(90deg,var(--ok),var(--warn),var(--bad))}
+.sp-timer.run>div{animation:spcount 3s linear forwards}
+@keyframes spcount{from{width:100%}to{width:0}}
+.sp-ask{font-size:12.5px;color:var(--muted);margin-top:6px}
+.sp-opts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px;text-align:left}
+@media(max-width:560px){.sp-opts{grid-template-columns:1fr}}
+.sp-opt{display:flex;align-items:center;gap:10px;border:2px solid var(--line);background:#f5f5f7;border-radius:16px;padding:13px 15px;font-size:14.5px;font-weight:500;color:var(--ink);cursor:pointer;line-height:1.5;transition:background .15s,border-color .15s,transform .1s;font-family:inherit}
+.sp-opt:hover{background:#fff;border-color:rgba(0,113,227,.4)}
+.sp-opt:active{transform:scale(.98)}
+.sp-opt .key{flex:none;width:22px;height:22px;border-radius:7px;background:#e8e8ed;font-size:12px;font-weight:700;color:#3a3a3c;display:flex;align-items:center;justify-content:center}
+.sp-opt.right{background:rgba(52,199,89,.15);border-color:var(--ok)}
+.sp-opt.right .key{background:var(--ok);color:#fff}
+.sp-opt.wrong{background:rgba(255,59,48,.12);border-color:var(--bad)}
+.sp-opt.wrong .key{background:var(--bad);color:#fff}
+.sp-opt.dim{opacity:.4}
+.sp-opt:disabled{cursor:default;transform:none}
 .w-spell-in{width:100%;max-width:380px;border:1.5px solid #d2d2d7;border-radius:14px;padding:12px 16px;font-size:19px;text-align:center;outline:none;display:block;margin:14px auto 0;background:#fff;transition:border-color .18s}
 .w-spell-in:focus{border-color:var(--brand)}
 .w-fb{margin-top:14px;font-size:14px;font-weight:600;border-radius:12px;padding:9px 14px}
@@ -585,6 +604,7 @@ details.custom textarea:focus{border-color:var(--brand)}
         <button class="btn primary big" id="btn-w-start">开始今日学习</button>
         <button class="btn" id="btn-w-book">生词本（<span id="w-book-n">0</span>）</button>
         <button class="btn" id="btn-w-import">导入词库</button>
+        <button class="btn" id="btn-w-speed" title="3 秒四选一，快速刷认词">极速看词</button>
                 <label class="w-daily" style="margin-left:0">练习方式
           <select id="w-dir" class="sel">
             <option value="mix" selected>智能 · 自适应</option>
@@ -624,6 +644,16 @@ details.custom textarea:focus{border-color:var(--brand)}
         <div></div>
       </div>
       <div class="w-book-list" id="w-book-list"></div>
+    </div>
+
+    <div id="w-speed" style="display:none">
+      <div class="drill-top">
+        <button class="btn ghost" id="btn-sp-exit">← 结束</button>
+        <div class="drill-title" id="sp-title"></div>
+        <div class="progress" style="flex:1;margin-bottom:0;max-width:200px"><div id="sp-bar"></div></div>
+      </div>
+      <div class="w-card" id="sp-card"></div>
+      <div class="drill-hint"><kbd>1</kbd>-<kbd>4</kbd> 选择答案 · 每题 3 秒，凭第一直觉作答</div>
     </div>
   </section>
 
@@ -7459,6 +7489,7 @@ function wShow(sub){
   $('#w-home').style.display = sub === 'home' ? '' : 'none';
   $('#w-study').style.display = sub === 'study' ? '' : 'none';
   $('#w-book').style.display = sub === 'book' ? '' : 'none';
+  $('#w-speed').style.display = sub === 'speed' ? '' : 'none';
 }
 let curAudio = null;
 function speakEn(text){
@@ -8084,6 +8115,108 @@ $('#w-daily').onchange = e => store.set('ieltsType.wordsDaily', parseInt(e.targe
 $('#w-dir').value = store.get('ieltsType.wDir', 'mix');
 $('#w-dir').onchange = e => store.set('ieltsType.wDir', e.target.value);
 
+/* ================= 极速看词（百词斩式 3 秒四选一） ================= */
+const SP_TIME = 3000;
+const spSess = { q: [], i: 0, right: 0, cur: null, t0: 0, timer: null, advance: null, locked: false };
+function spVisible(){
+  return $('#view-words').classList.contains('active') && $('#w-speed').style.display !== 'none';
+}
+function startSpeed(){
+  const now = Date.now();
+  const due = Object.keys(WREC).filter(id => WREC[id] && WREC[id].due <= now && WMAP[id]);
+  const fresh = WORDS.filter(w => !WREC[w.id]).map(w => w.id);
+  let ids = shuffleArr(due).slice(0, 14).concat(shuffleArr(fresh).slice(0, 10));
+  if(ids.length < 20){                       // 到期/新词不足时从全部词库随机补题
+    const set = new Set(ids);
+    ids = ids.concat(shuffleArr(WORDS.map(w => w.id).filter(id => !set.has(id))).slice(0, 20 - ids.length));
+  }
+  ids = shuffleArr(ids).slice(0, 20);
+  Object.assign(spSess, { q: ids, i: 0, right: 0, cur: null, t0: 0, timer: null, advance: null, locked: false });
+  $('#sp-title').textContent = '极速看词 · ' + ids.length + ' 题 · 每题 3 秒';
+  wShow('speed');
+  renderSpeedTask();
+}
+function renderSpeedTask(){
+  clearTimeout(spSess.timer); clearTimeout(spSess.advance);
+  if(!spVisible()) return;
+  if(spSess.i >= spSess.q.length){ finishSpeed(); return; }
+  const id = spSess.q[spSess.i];
+  const w = WMAP[id];
+  const en2zh = Math.random() < 0.5;         // 看词选义 / 看义选词
+  let opts = [w];
+  const used = new Set([id]);
+  const zhKey = zhNorm(w.zh);
+  for(let guard = 0; guard < 300 && opts.length < 4; guard++){
+    const c = WORDS[(Math.random() * WORDS.length) | 0];
+    if(!c || used.has(c.id)) continue;
+    if(en2zh){ if(!c.zh || zhNorm(c.zh) === zhKey) continue; }
+    else if(c.en.toLowerCase() === w.en.toLowerCase()) continue;
+    used.add(c.id); opts.push(c);
+  }
+  opts = shuffleArr(opts);
+  spSess.cur = { id, en2zh };
+  spSess.locked = false;
+  spSess.t0 = Date.now();
+  $('#sp-bar').style.width = Math.round(spSess.i / spSess.q.length * 100) + '%';
+  $('#sp-card').innerHTML =
+    '<div class="w-kind" style="background:rgba(0,113,227,.12);color:var(--brand)">极速看词 ' + (spSess.i + 1) + '/' + spSess.q.length + '</div>'
+    + (en2zh
+        ? '<div class="w-word">' + esc(w.en) + '</div><div class="w-ipa">' + esc(w.ipa) + '</div><div class="sp-ask">选出它的中文释义</div>'
+        : '<div class="w-zh" style="font-size:21px">' + esc(w.zh) + '</div><div class="sp-ask">选出对应的英文单词</div>')
+    + '<div class="sp-timer" id="sp-timer"><div></div></div>'
+    + '<div class="sp-opts">' + opts.map((o, k) =>
+        '<button class="sp-opt" data-w="' + esc(o.id) + '"><span class="key">' + (k + 1) + '</span><span>' + esc(en2zh ? o.zh : o.en) + '</span></button>').join('') + '</div>';
+  requestAnimationFrame(() => { const t = $('#sp-timer'); if(t && spVisible()) t.classList.add('run'); });
+  $('#sp-card').querySelectorAll('.sp-opt').forEach(b => { b.onclick = () => pickSpeed(b.dataset.w); });
+  if(en2zh) speakEn(w.en);
+  spSess.timer = setTimeout(() => pickSpeed(null), SP_TIME);
+}
+function pickSpeed(chosen){
+  if(spSess.locked || !spSess.cur) return;
+  spSess.locked = true;
+  clearTimeout(spSess.timer);
+  const rt = Math.max(1, Date.now() - spSess.t0);
+  const ok = chosen === spSess.cur.id;
+  if(ok) spSess.right++;
+  gradeWord(spSess.cur.id, ok ? 2 : 0, ok ? rt : Math.max(rt, SP_TIME));
+  beep(ok ? 'done' : 'alarm');
+  const t = $('#sp-timer');
+  if(t){ const bar = t.firstElementChild; bar.style.width = getComputedStyle(bar).width; t.classList.remove('run'); }
+  $('#sp-card').querySelectorAll('.sp-opt').forEach(b => {
+    b.disabled = true;
+    if(b.dataset.w === spSess.cur.id) b.classList.add('right');
+    else if(b.dataset.w === chosen) b.classList.add('wrong');
+    else b.classList.add('dim');
+  });
+  spSess.i++;
+  spSess.advance = setTimeout(renderSpeedTask, ok ? 450 : 950);
+}
+function finishSpeed(){
+  const n = spSess.q.length, right = spSess.right;
+  const rate = n ? Math.round(right / n * 100) : 0;
+  wShow('home');
+  renderWordsHome();
+  showModal('<h3>极速看词完成</h3>'
+    + '<div class="bigstats">'
+    + '<div class="bigstat"><i>答题</i><b>' + n + '</b><i>题</i></div>'
+    + '<div class="bigstat"><i>答对</i><b>' + right + '</b><i>题</i></div>'
+    + '<div class="bigstat"><i>正确率</i><b>' + rate + '%</b><i>&nbsp;</i></div>'
+    + '</div>'
+    + '<div class="kv">答对即「认识」入记忆引擎，答错或超时会标记「忘记」并很快回到复习队列。</div>'
+    + '<div class="modal-actions">'
+    + '<button class="btn primary" data-act="sp-again">再来一轮</button>'
+    + '<button class="btn" data-act="w-home">返回单词首页</button></div>');
+}
+$('#btn-w-speed').onclick = startSpeed;
+$('#btn-sp-exit').onclick = () => { clearTimeout(spSess.timer); clearTimeout(spSess.advance); renderWordsHome(); wShow('home'); };
+document.addEventListener('keydown', e => {
+  if(!spVisible() || spSess.locked) return;
+  if(e.key >= '1' && e.key <= '4'){
+    const b = document.querySelectorAll('#sp-card .sp-opt')[+e.key - 1];
+    if(b && !b.disabled) pickSpeed(b.dataset.w);
+  }
+});
+
 /* ================= 阅读理解引擎 ================= */
 const ICO_SAY = '<svg viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6"/><path d="M17.8 6.8a7.6 7.6 0 0 1 0 10.4"/></svg>';
 const ROM = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii'];
@@ -8523,6 +8656,7 @@ $('#modal').addEventListener('click', e => {
   else if(a === 'essay-retry'){ closeModal(); startEssay(essay.id, essay.prompt, essay.min); }
   else if(a === 'essay-home'){ closeModal(); goHome(); }
   else if(a === 'w-again'){ closeModal(); startSession(wSess.scope); }
+  else if(a === 'sp-again'){ closeModal(); startSpeed(); }
   else if(a === 'w-home'){ closeModal(); renderWordsHome(); wShow('home'); }
   else if(a === 'rd-review'){ closeModal(); }
   else if(a === 'rd-retry'){ closeModal(); startReading(rd.p.id); }
