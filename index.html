@@ -391,6 +391,31 @@ details.custom textarea:focus{border-color:var(--brand)}
 .isl-btn.primary{background:#fff;color:#000}
 .isl-btn.ghost{background:rgba(255,255,255,.16);color:#fff}
 
+/* ---------- 灵动岛内嵌计划 ---------- */
+.isl-head .isl-streak{margin-left:auto;font-size:12px;font-weight:600;background:rgba(255,255,255,.18);color:#fff;padding:2px 10px;border-radius:99px}
+.isl-head .isl-streak.idle{background:rgba(255,255,255,.08);color:rgba(255,255,255,.5)}
+.isl-sub{font-size:12px;color:rgba(255,255,255,.7);margin-bottom:8px}
+.isl-sub b{color:#fff;font-weight:600}
+.isl-plan-bar{height:5px;background:rgba(255,255,255,.14);border-radius:99px;overflow:hidden;margin-bottom:10px}
+.isl-plan-bar>div{height:100%;border-radius:99px;background:linear-gradient(90deg,#4aa3ff,#34c759);transition:width .4s ease}
+.isl-plan-tasks{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+.isl-plan-row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:5px 10px;background:rgba(255,255,255,.08);border-radius:9px}
+.isl-plan-row span{color:rgba(255,255,255,.85)}
+.isl-plan-row b{font-weight:600;color:#fff;font-variant-numeric:tabular-nums;font-size:12.5px}
+.isl-plan-heat{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:10px}
+.iph{aspect-ratio:1;border-radius:3px;background:rgba(255,255,255,.1);cursor:default;transition:transform .15s}
+.iph:hover{transform:scale(1.15)}
+.iph.ph{background:transparent}
+.iph.lv1{background:rgba(255,255,255,.22)}
+.iph.lv2{background:#34c759}
+.iph.lv3{background:#0ab84a}
+.isl-plan-sets{display:flex;gap:10px;align-items:center;margin-bottom:8px}
+.isl-plan-sets label{font-size:11px;color:rgba(255,255,255,.75);display:flex;align-items:center;gap:4px}
+.isl-sel,.isl-time{padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.12);color:#fff;font-size:11px;font-family:inherit;outline:none}
+.isl-sel option{background:#222;color:#fff}
+.isl-plan-sets input[type=checkbox]{accent-color:#4aa3ff}
+.isl-foot-mini{font-size:11px;color:rgba(255,255,255,.55);text-align:center;margin-top:auto}
+
 /* ---------- 自定义背景 ---------- */
 #bgLayer{position:fixed;inset:0;z-index:-1;background-repeat:no-repeat;background-position:center;opacity:.35;pointer-events:none}
 #bgBtn{position:fixed;right:16px;bottom:16px;z-index:99999;padding:8px 16px;border:0;border-radius:980px;background:rgba(255,255,255,.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);color:var(--ink);font-size:13px;cursor:pointer;opacity:.55;transition:.2s;box-shadow:0 2px 12px rgba(0,0,0,.1)}
@@ -652,7 +677,6 @@ details.custom textarea:focus{border-color:var(--brand)}
           </select>
         </label>
       </div>
-      <div class="plan-card" id="plan-card"></div>
       <h3 class="w-sec">选择词库关卡（点击任意一组直接开练）</h3>
       <div class="cat-filter" id="w-book-tabs"></div>
       <div class="w-lists" id="w-lists"></div>
@@ -7914,7 +7938,7 @@ function renderWordsHome(){
   $('#w-stat-due').onclick = () => due > 0 ? startSession(null, 'review') : toast('现在没有到期的复习词');
   $('#w-stat-new').onclick = () => fresh > 0 ? startSession(null, 'new') : toast('所有新词都学完了');
   $('#w-stat-done').onclick = showMastered;
-  renderPlan(due);
+  islandRenderPanel();   // 首页渲染后刷新岛面板（如果岛正开着）
 }
 function showMastered(){
   const mastered = WORDS.filter(w => WREC[w.id] && WREC[w.id].stage >= 8);
@@ -8852,8 +8876,16 @@ function islandSet(icon, text, mode){
 }
 function islandIdle(){
   const now = new Date(), pad = n => String(n).padStart(2, '0');
+  const p = getPlan();
+  const k = todayKey();
+  const t = p.days[k] || {};
   const learned = WORDS.filter(w => WREC[w.id]).length;
-  islandSet('', pad(now.getHours()) + ':' + pad(now.getMinutes()) + (learned ? ' · 今日词库 ' + learned + ' 词' : ' · 点我开始'), 'idle');
+  const streak = planStreak(p);
+  if(streak > 0){
+    islandSet('', pad(now.getHours()) + ':' + pad(now.getMinutes()) + ' · 🔥' + streak + '天 · ' + (t.ans || 0) + '/' + p.goal + '题', 'idle');
+  }else{
+    islandSet('', pad(now.getHours()) + ':' + pad(now.getMinutes()) + (learned ? ' · 今日词库 ' + learned + ' 词' : ' · 点我开始'), 'idle');
+  }
 }
 function islandPulse(){
   const el = $('#island');
@@ -8862,15 +8894,73 @@ function islandPulse(){
   el.classList.add('pulse');
 }
 function islandRenderPanel(){
+  if(island.mode === 'idle'){
+    const p = getPlan();
+    const k = todayKey();
+    const t = p.days[k] || { ans:0, rv:0, nw:0, ok:false };
+    const due = WORDS.filter(w => WREC[w.id] && WREC[w.id].due <= Date.now()).length;
+    const fresh = WORDS.filter(w => !WREC[w.id]).length;
+    const dailyNew = (document.getElementById('w-daily') || {}).value || 10;
+    const streak = planStreak(p);
+    const learned = WORDS.filter(w => WREC[w.id]).length;
+    const left = Math.max(0, p.goal - t.ans);
+    const pct = Math.min(100, Math.round(t.ans / Math.max(1, p.goal) * 100));
+    /* 30 格迷你热力图：末 30 格为近 30 天，前 5 格占位 */
+    let heat = '';
+    const nowD = new Date();
+    for(let i = 34; i >= 0; i--){
+      if(i >= 30){ heat += '<span class="iph ph"></span>'; continue; }
+      const d = new Date(nowD); d.setDate(d.getDate() - i);
+      const dk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      const rec = p.days[dk];
+      let cls = '';
+      if(rec && rec.ok) cls = (rec.ans >= p.goal * 1.5 ? ' lv3' : ' lv2');
+      else if(rec && rec.ans > 0) cls = ' lv1';
+      heat += '<span class="iph' + cls + '" title="' + dk + ' · ' + ((rec && rec.ans) || 0) + ' 题"></span>';
+    }
+    $('#isl-panel').innerHTML =
+      '<div class="isl-head">'
+      +   '<span>今日计划</span>'
+      +   '<span class="isl-streak' + (streak > 0 ? '' : ' idle') + '">' + (streak > 0 ? '🔥 ' + streak + '天' : '尚未打卡') + '</span>'
+      + '</div>'
+      + '<div class="isl-sub">' + (t.ok ? '已打卡 ✓' : '还差 ' + left + ' 题达标') + '</div>'
+      + '<div class="isl-plan-bar"><div style="width:' + pct + '%"></div></div>'
+      + '<div class="isl-plan-tasks">'
+      +   '<div class="isl-plan-row"><span>📖 复习到期</span><b>' + due + ' 词 · 已练 ' + t.rv + '</b></div>'
+      +   '<div class="isl-plan-row"><span>✨ 新词目标</span><b>' + dailyNew + ' 个 · 已学 ' + t.nw + '</b></div>'
+      +   '<div class="isl-plan-row"><span>🎯 答题目标</span><b>' + t.ans + ' / ' + p.goal + (t.ok ? ' ✓' : '') + '</b></div>'
+      + '</div>'
+      + '<div class="isl-plan-heat">' + heat + '</div>'
+      + '<div class="isl-plan-sets">'
+      +   '<label>目标 <select class="plan-goal isl-sel">' + [10,20,30,50,100].map(n => '<option value="'+n+'"' + (n===p.goal?' selected':'') + '>'+n+'</option>').join('') + '</select></label>'
+      +   '<label><input type="time" class="plan-remind isl-time" value="' + esc(p.remind || '') + '"></label>'
+      +   '<label><input type="checkbox" class="plan-remind-on"' + (p.remindOn?' checked':'') + '></label>'
+      + '</div>'
+      + '<div class="isl-foot-mini">已学 ' + learned + '/' + WORDS.length + ' · 待复习 ' + due + ' · 新词 ' + fresh + '</div>'
+      + '<div class="isl-btns"><button class="isl-btn ghost" data-isl="close">收起</button><button class="isl-btn primary" id="isl-start">开始今日学习 →</button></div>';
+    /* 绑定设置变更事件（每次重新绑定，DOM 重建） */
+    const panel = $('#isl-panel');
+    panel.addEventListener('change', e => {
+      const tg = e.target;
+      if(!tg || !tg.classList) return;
+      const pp = getPlan();
+      if(tg.classList.contains('plan-goal')){ pp.goal = parseInt(tg.value, 10) || 20; }
+      else if(tg.classList.contains('plan-remind')){ pp.remind = tg.value || ''; }
+      else if(tg.classList.contains('plan-remind-on')){ pp.remindOn = !!tg.checked; }
+      else return;
+      setPlan(pp);
+      islandRenderPanel();   // 设置变了就重渲染面板
+    });
+    const startBtn = panel.querySelector('#isl-start');
+    if(startBtn) startBtn.onclick = () => {
+      $('#island').classList.remove('open'); island.open = false;
+      startSession();    // 默认今日学习（startSession 无参 = 全部词库）
+    };
+    return;   // idle 已处理，不走后面的通用渲染
+  }
   const cells = [];
   const t = id => { const el = document.getElementById(id); return el ? el.textContent.trim() : '—'; };
-  if(island.mode === 'idle'){
-    const learned = WORDS.filter(w => WREC[w.id]).length;
-    const due = WORDS.filter(w => WREC[w.id] && WREC[w.id].due <= Date.now()).length;
-    const best = store.get('ieltsType.best', {});
-    const bestWpm = Object.values(best).reduce((m, r) => Math.max(m, r.wpm || 0), 0);
-    cells.push(['单词已学', learned + '/' + WORDS.length], ['待复习', due], ['打字最佳', bestWpm + ' WPM'], ['已练文章', Object.keys(best).length + ' 篇']);
-  }else if(island.mode === 'typing'){
+  if(island.mode === 'typing'){
     cells.push(['速度', t('t-wpm') + ' WPM'], ['正确率', t('t-acc')], ['进度', t('t-prog')], ['用时', t('t-time')]);
   }else if(island.mode === 'essay'){
     cells.push(['剩余时间', t('essay-time')], ['字数', t('essay-words')], ['词数徽标', t('essay-badge') || '—'], ['模式', '写作模拟']);
@@ -8888,7 +8978,6 @@ function islandRenderPanel(){
     '<div class="isl-head">' + (ISL_NAMES[island.mode] || island.mode) + '</div>'
     + '<div class="isl-stats">' + cells.map(c => '<div class="isl-cell"><i>' + esc(c[0]) + '</i><b>' + esc(String(c[1])) + '</b></div>').join('') + '</div>'
     + '<div class="isl-btns"><button class="isl-btn ghost" data-isl="close">收起</button>'
-    + (island.mode === 'idle' ? '' : '<button class="isl-btn primary" data-isl="home">返回首页</button>')
     + '</div>';
 }
 /* 点击岛外任意处自动收起 */
