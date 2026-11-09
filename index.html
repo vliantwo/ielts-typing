@@ -7483,7 +7483,7 @@ function persistCustomLists(){
 
 let WREC = store.get('ieltsType.words', {});
 let MARKS = store.get('ieltsType.marks', []);
-const wSess = { q: [], i: 0, done: 0, scope: null, stat: { nw: 0, rv: 0, spell: 0, first: 0 } };
+const wSess = { q: [], i: 0, done: 0, scope: null, stat: { nw: 0, rv: 0, spell: 0, first: 0 }, locked: false, spTimer: null, spAdv: null };
 
 function wShow(sub){
   $('#w-home').style.display = sub === 'home' ? '' : 'none';
@@ -7794,12 +7794,13 @@ function startSession(listIdx, only){
   let fresh = WORDS.filter(w => !WREC[w.id] && (listIdx == null || w.list === listIdx)).slice(0, dailyNew);
   if(only === 'review') fresh = [];
   if(only === 'new') due = [];
-  const q = due.map(id => ({ id, kind: 'recall' }));
+  /* 到期复习词随机 35% 转成极速四选一快题，与拼写/翻面题混着练 */
+  const q = due.map(id => ({ id, kind: Math.random() < 0.35 ? 'speed' : 'recall' }));
   fresh.forEach((w, k) => {
     q.splice(Math.min(q.length, (k + 1) * 4), 0, { id: w.id, kind: 'new-intro' }, { id: w.id, kind: 'new-spell' });
   });
   if(!q.length){ toast(only === 'review' ? '现在没有到期的复习词' : only === 'new' ? '没有可学的新词了' : '这一组今天没有要复习的词，也没有新词了'); return; }
-  Object.assign(wSess, { q, i: 0, done: 0, scope: listIdx, stat: { nw: 0, rv: 0, spell: 0, first: 0 } });
+  Object.assign(wSess, { q, i: 0, done: 0, scope: listIdx, stat: { nw: 0, rv: 0, spell: 0, first: 0 }, locked: false, spTimer: null, spAdv: null });
   $('#w-st-title').textContent = only === 'review' ? '复习模式 · 到期单词'
     : only === 'new' ? '新词模式 · 只学新词'
     : listIdx == null ? '今日学习 · 全部词库' : 'List ' + (listIdx + 1) + ' · ' + WORD_LISTS[listIdx].name;
@@ -7808,6 +7809,7 @@ function startSession(listIdx, only){
 }
 function renderTask(){
   if(wSess.i >= wSess.q.length){ finishSession(); return; }
+  clearTimeout(wSess.spTimer); clearTimeout(wSess.spAdv);
   const t = wSess.q[wSess.i];
   wSess.tShown = Date.now();
   const w = WMAP[t.id];
@@ -7815,6 +7817,7 @@ function renderTask(){
   $('#w-st-bar').style.width = Math.round(wSess.done / wSess.q.length * 100) + '%';
   islandSet('', '单词 ' + (wSess.i + 1) + '/' + wSess.q.length + ' · ' + Math.round(wSess.done / wSess.q.length * 100) + '%', 'words');
   const card = $('#w-card');
+  if(t.kind === 'speed'){ renderSpeedQ(t, card); return; }
   if(t.kind === 'recall'){
     const _d = nextDir(t.id); t.dir = _d; const zh2en = (_d === 'en');
     if(zh2en){
@@ -8109,7 +8112,7 @@ $('#btn-w-back').onclick = goHome;
 $('#btn-w-start').onclick = () => startSession(null);
 $('#btn-w-book').onclick = () => { renderBook(); wShow('book'); };
 $('#btn-w-book-back').onclick = () => { renderWordsHome(); wShow('home'); };
-$('#btn-w-exit').onclick = () => { renderWordsHome(); wShow('home'); };
+$('#btn-w-exit').onclick = () => { clearTimeout(wSess.spTimer); clearTimeout(wSess.spAdv); renderWordsHome(); wShow('home'); };
 $('#w-daily').value = String(store.get('ieltsType.wordsDaily', 10));
 $('#w-daily').onchange = e => store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10);
 $('#w-dir').value = store.get('ieltsType.wDir', 'mix');
@@ -8118,6 +8121,76 @@ $('#w-dir').onchange = e => store.set('ieltsType.wDir', e.target.value);
 /* ================= 极速看词（百词斩式 3 秒四选一） ================= */
 const SP_TIME = 3000;
 const spSess = { q: [], i: 0, right: 0, cur: null, t0: 0, timer: null, advance: null, locked: false };
+/* 四选一题面共用：干扰项去重 + 随机排列 */
+function speedOptions(w, en2zh){
+  let opts = [w];
+  const used = new Set([w.id]);
+  const zhKey = zhNorm(w.zh);
+  for(let guard = 0; guard < 300 && opts.length < 4; guard++){
+    const c = WORDS[(Math.random() * WORDS.length) | 0];
+    if(!c || used.has(c.id)) continue;
+    if(en2zh){ if(!c.zh || zhNorm(c.zh) === zhKey) continue; }
+    else if(c.en.toLowerCase() === w.en.toLowerCase()) continue;
+    used.add(c.id); opts.push(c);
+  }
+  return shuffleArr(opts);
+}
+function spQuestionHTML(w, opts, en2zh, tag){
+  return '<div class="w-kind" style="background:rgba(0,113,227,.12);color:var(--brand)">' + tag + '</div>'
+    + (en2zh
+        ? '<div class="w-word">' + esc(w.en) + '</div><div class="w-ipa">' + esc(w.ipa) + '</div><div class="sp-ask">选出它的中文释义</div>'
+        : '<div class="w-zh" style="font-size:21px">' + esc(w.zh) + '</div><div class="sp-ask">选出对应的英文单词</div>')
+    + '<div class="sp-timer"><div></div></div>'
+    + '<div class="sp-opts">' + opts.map((o, k) =>
+        '<button class="sp-opt" data-w="' + esc(o.id) + '"><span class="key">' + (k + 1) + '</span><span>' + esc(en2zh ? o.zh : o.en) + '</span></button>').join('') + '</div>';
+}
+function spFreezeTimer(card){
+  const t = card.querySelector('.sp-timer');
+  if(t){ const bar = t.firstElementChild; bar.style.width = getComputedStyle(bar).width; t.classList.remove('run'); }
+}
+function spMarkOptions(card, answerId, chosen){
+  card.querySelectorAll('.sp-opt').forEach(b => {
+    b.disabled = true;
+    if(b.dataset.w === answerId) b.classList.add('right');
+    else if(b.dataset.w === chosen) b.classList.add('wrong');
+    else b.classList.add('dim');
+  });
+}
+/* ---------- 混入今日学习的极速快题（渲染在 #w-card 内） ---------- */
+function studyActive(){
+  return $('#view-words').classList.contains('active') && $('#w-study').style.display !== 'none';
+}
+function renderSpeedQ(t, card){
+  const w = WMAP[t.id];
+  const en2zh = Math.random() < 0.5;
+  t.en2zh = en2zh;
+  const opts = speedOptions(w, en2zh);
+  wSess.locked = false;
+  card.innerHTML = spQuestionHTML(w, opts, en2zh, '极速快题 ' + (wSess.i + 1) + '/' + wSess.q.length);
+  const timer = card.querySelector('.sp-timer');
+  requestAnimationFrame(() => { if(studyActive() && timer) timer.classList.add('run'); });
+  card.querySelectorAll('.sp-opt').forEach(b => { b.onclick = () => gradeSpeedQ(t, b.dataset.w, card); });
+  if(en2zh) speakEn(w.en);
+  clearTimeout(wSess.spTimer);
+  wSess.spTimer = setTimeout(() => gradeSpeedQ(t, null, card), SP_TIME);
+}
+function gradeSpeedQ(t, chosen, card){
+  if(wSess.locked) return;
+  wSess.locked = true;
+  clearTimeout(wSess.spTimer);
+  const rt = Math.max(1, Date.now() - wSess.tShown);
+  const ok = chosen === t.id;
+  gradeWord(t.id, ok ? 2 : 0, ok ? rt : Math.max(rt, SP_TIME));
+  markDir(t.id, t.en2zh ? 'zh' : 'en', ok);
+  beep(ok ? 'done' : 'alarm');
+  spFreezeTimer(card);
+  spMarkOptions(card, t.id, chosen);
+  wSess.stat.rv++;
+  wSess.done++; wSess.i++;
+  clearTimeout(wSess.spAdv);
+  wSess.spAdv = setTimeout(() => { if(studyActive()) renderTask(); }, ok ? 500 : 950);
+}
+/* ---------- 独立的极速看词模式 ---------- */
 function spVisible(){
   return $('#view-words').classList.contains('active') && $('#w-speed').style.display !== 'none';
 }
@@ -8143,31 +8216,16 @@ function renderSpeedTask(){
   const id = spSess.q[spSess.i];
   const w = WMAP[id];
   const en2zh = Math.random() < 0.5;         // 看词选义 / 看义选词
-  let opts = [w];
-  const used = new Set([id]);
-  const zhKey = zhNorm(w.zh);
-  for(let guard = 0; guard < 300 && opts.length < 4; guard++){
-    const c = WORDS[(Math.random() * WORDS.length) | 0];
-    if(!c || used.has(c.id)) continue;
-    if(en2zh){ if(!c.zh || zhNorm(c.zh) === zhKey) continue; }
-    else if(c.en.toLowerCase() === w.en.toLowerCase()) continue;
-    used.add(c.id); opts.push(c);
-  }
-  opts = shuffleArr(opts);
+  const opts = speedOptions(w, en2zh);
   spSess.cur = { id, en2zh };
   spSess.locked = false;
   spSess.t0 = Date.now();
   $('#sp-bar').style.width = Math.round(spSess.i / spSess.q.length * 100) + '%';
-  $('#sp-card').innerHTML =
-    '<div class="w-kind" style="background:rgba(0,113,227,.12);color:var(--brand)">极速看词 ' + (spSess.i + 1) + '/' + spSess.q.length + '</div>'
-    + (en2zh
-        ? '<div class="w-word">' + esc(w.en) + '</div><div class="w-ipa">' + esc(w.ipa) + '</div><div class="sp-ask">选出它的中文释义</div>'
-        : '<div class="w-zh" style="font-size:21px">' + esc(w.zh) + '</div><div class="sp-ask">选出对应的英文单词</div>')
-    + '<div class="sp-timer" id="sp-timer"><div></div></div>'
-    + '<div class="sp-opts">' + opts.map((o, k) =>
-        '<button class="sp-opt" data-w="' + esc(o.id) + '"><span class="key">' + (k + 1) + '</span><span>' + esc(en2zh ? o.zh : o.en) + '</span></button>').join('') + '</div>';
-  requestAnimationFrame(() => { const t = $('#sp-timer'); if(t && spVisible()) t.classList.add('run'); });
-  $('#sp-card').querySelectorAll('.sp-opt').forEach(b => { b.onclick = () => pickSpeed(b.dataset.w); });
+  const card = $('#sp-card');
+  card.innerHTML = spQuestionHTML(w, opts, en2zh, '极速看词 ' + (spSess.i + 1) + '/' + spSess.q.length);
+  const timer = card.querySelector('.sp-timer');
+  requestAnimationFrame(() => { if(spVisible() && timer) timer.classList.add('run'); });
+  card.querySelectorAll('.sp-opt').forEach(b => { b.onclick = () => pickSpeed(b.dataset.w); });
   if(en2zh) speakEn(w.en);
   spSess.timer = setTimeout(() => pickSpeed(null), SP_TIME);
 }
@@ -8180,14 +8238,9 @@ function pickSpeed(chosen){
   if(ok) spSess.right++;
   gradeWord(spSess.cur.id, ok ? 2 : 0, ok ? rt : Math.max(rt, SP_TIME));
   beep(ok ? 'done' : 'alarm');
-  const t = $('#sp-timer');
-  if(t){ const bar = t.firstElementChild; bar.style.width = getComputedStyle(bar).width; t.classList.remove('run'); }
-  $('#sp-card').querySelectorAll('.sp-opt').forEach(b => {
-    b.disabled = true;
-    if(b.dataset.w === spSess.cur.id) b.classList.add('right');
-    else if(b.dataset.w === chosen) b.classList.add('wrong');
-    else b.classList.add('dim');
-  });
+  const card = $('#sp-card');
+  spFreezeTimer(card);
+  spMarkOptions(card, spSess.cur.id, chosen);
   spSess.i++;
   spSess.advance = setTimeout(renderSpeedTask, ok ? 450 : 950);
 }
@@ -8210,10 +8263,17 @@ function finishSpeed(){
 $('#btn-w-speed').onclick = startSpeed;
 $('#btn-sp-exit').onclick = () => { clearTimeout(spSess.timer); clearTimeout(spSess.advance); renderWordsHome(); wShow('home'); };
 document.addEventListener('keydown', e => {
-  if(!spVisible() || spSess.locked) return;
-  if(e.key >= '1' && e.key <= '4'){
+  if(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if(e.key < '1' || e.key > '4') return;
+  if(spVisible() && !spSess.locked){
     const b = document.querySelectorAll('#sp-card .sp-opt')[+e.key - 1];
     if(b && !b.disabled) pickSpeed(b.dataset.w);
+  }else if(studyActive() && !wSess.locked){
+    const t = wSess.q[wSess.i];
+    if(t && t.kind === 'speed'){
+      const b = document.querySelectorAll('#w-card .sp-opt')[+e.key - 1];
+      if(b && !b.disabled) gradeSpeedQ(t, b.dataset.w, $('#w-card'));
+    }
   }
 });
 
