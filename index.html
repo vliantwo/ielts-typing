@@ -7460,7 +7460,22 @@ function wShow(sub){
   $('#w-study').style.display = sub === 'study' ? '' : 'none';
   $('#w-book').style.display = sub === 'book' ? '' : 'none';
 }
+let curAudio = null;
 function speakEn(text){
+  /* 优先播放仓库内置的真人发音（audio/<词>.mp3），缺失时回退浏览器 TTS */
+  const id = (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if(curAudio){ curAudio.pause(); curAudio = null; }
+  if(id){
+    const a = new Audio('audio/' + id + '.mp3');
+    const fb = () => { if(a._fb) return; a._fb = true; if(curAudio === a) curAudio = null; ttsEn(text); };
+    a.onerror = fb;
+    curAudio = a;
+    a.play().catch(fb);
+    return;
+  }
+  ttsEn(text);
+}
+function ttsEn(text){
   if(!('speechSynthesis' in window)) return;
   loadVoices();
   speechSynthesis.cancel();
