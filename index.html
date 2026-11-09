@@ -7636,7 +7636,7 @@ function gradeWord(id, g, rt){
   planBump(_isNew);
   return r;
 }
-$('#w-daily').onchange = e => { store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10); renderPlan(); };
+$('#w-daily').onchange = e => { store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10); islandRenderPanel(); };
 
 /* ================= 每日计划：打卡 / 热力图 / 提醒 ================= */
 const K_PLAN = 'ieltsType.plan';
@@ -7939,6 +7939,8 @@ function renderWordsHome(){
   $('#w-stat-due').onclick = () => due > 0 ? startSession(null, 'review') : toast('现在没有到期的复习词');
   $('#w-stat-new').onclick = () => fresh > 0 ? startSession(null, 'new') : toast('所有新词都学完了');
   $('#w-stat-done').onclick = showMastered;
+  /* 回到单词首页时把岛切回计划态，否则离开学习后岛还停留在「单词 3/10」的旧状态 */
+  islandIdle();
   islandRenderPanel();   // 首页渲染后刷新岛面板（如果岛正开着）
 }
 function showMastered(){
@@ -8956,19 +8958,24 @@ function islandRenderPanel(){
       + '</div>'
       + '<div class="isl-foot-mini">已学 ' + learned + '/' + WORDS.length + ' · 待复习 ' + due + ' · 新词 ' + fresh + '</div>'
       + '<div class="isl-btns"><button class="isl-btn ghost" data-isl="close">收起</button><button class="isl-btn primary" id="isl-start">开始今日学习 →</button></div>';
-    /* 绑定设置变更事件（每次重新绑定，DOM 重建） */
+    /* 用 onchange 赋值而非 addEventListener：#isl-panel 是常驻节点，每次渲染都 add 会不断叠加监听 */
     const panel = $('#isl-panel');
-    panel.addEventListener('change', e => {
+    panel.onchange = e => {
       const tg = e.target;
       if(!tg || !tg.classList) return;
       const pp = getPlan();
-      if(tg.classList.contains('plan-goal')){ pp.goal = parseInt(tg.value, 10) || 20; }
+      if(tg.classList.contains('plan-goal')){
+        pp.goal = parseInt(tg.value, 10) || 20;
+        /* 目标被调低到今日已完成题数以下时直接算达标，避免显示「还差 0 题」却没打卡 */
+        const rec = pp.days[todayKey()];
+        if(rec && rec.ans >= pp.goal) rec.ok = true;
+      }
       else if(tg.classList.contains('plan-remind')){ pp.remind = tg.value || ''; }
       else if(tg.classList.contains('plan-remind-on')){ pp.remindOn = !!tg.checked; }
       else return;
       setPlan(pp);
       islandRenderPanel();   // 设置变了就重渲染面板
-    });
+    };
     const startBtn = panel.querySelector('#isl-start');
     if(startBtn) startBtn.onclick = () => {
       islandClose();
@@ -9014,11 +9021,15 @@ $('#island').addEventListener('click', e => {
     else if(act.dataset.isl === 'home'){ islandClose(); closeModal(); goHome(); }
     return;
   }
+  /* 展开态点面板里的控件（目标下拉 / 提醒时间 / 开关）时不要被当成「点岛」而收起 */
+  if(island.open && e.target.closest('.isl-panel')) return;
   island.open = !island.open;
   $('#island').classList.toggle('open', island.open);
   if(island.open) islandRenderPanel(); else $('#island').style.height = '';
 });
 setInterval(() => { if(island.mode === 'idle') islandIdle(); }, 5000);
+/* 窗口尺寸变化（手机旋转/缩放）后按内容重新算高度，否则展开面板会留白或被裁 */
+window.addEventListener('resize', () => { if(island.open) islandFit(); });
 islandIdle();
 
 /* 回车键快捷操作：单词学习卡确认/翻面，跟读模式下一句 */
