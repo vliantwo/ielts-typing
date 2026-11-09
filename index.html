@@ -286,6 +286,36 @@ details.custom textarea:focus{border-color:var(--brand)}
 .sp-opt.wrong .key{background:var(--bad);color:#fff}
 .sp-opt.dim{opacity:.4}
 .sp-opt:disabled{cursor:default;transform:none}
+/* ---------- 每日计划 ---------- */
+.plan-card{background:var(--card);border-radius:24px;box-shadow:var(--shadow);padding:22px 26px;margin-bottom:18px}
+.plan-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.plan-head h3{font-size:17px;font-weight:700;letter-spacing:-.015em}
+.plan-streak{font-size:13px;font-weight:600;color:var(--brand);background:rgba(0,113,227,.08);padding:4px 12px;border-radius:99px}
+.plan-streak.idle{color:var(--muted);background:#f0f0f3}
+.plan-sub{font-size:13px;color:var(--muted);margin-top:4px}
+.plan-sub b{color:var(--ink);font-weight:600}
+.plan-bar{height:8px;background:#ededf0;border-radius:99px;overflow:hidden;margin:14px 0 18px}
+.plan-bar>div{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--brand),var(--ok));transition:width .4s ease}
+.plan-bar.done>div{background:var(--ok)}
+.plan-tasks{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+.plan-task{display:flex;align-items:center;gap:12px;font-size:13.5px;padding:10px 14px;background:#f5f5f7;border-radius:14px}
+.plan-task .ico{font-size:18px;flex:none;width:28px;text-align:center}
+.plan-task .label{flex:1;color:#3a3a3c}
+.plan-task .val{font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink)}
+.plan-task .val.ok{color:var(--ok)}
+.plan-heat{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:18px}
+.plan-heat .cell{aspect-ratio:1;border-radius:5px;background:#ededf0;position:relative;cursor:default;transition:transform .15s}
+.plan-heat .cell:hover{transform:scale(1.15)}
+.plan-heat .cell.ph{background:transparent}
+.plan-heat .cell.lv1{background:rgba(0,113,227,.18)}
+.plan-heat .cell.lv2{background:rgba(52,199,89,.55)}
+.plan-heat .cell.lv3{background:rgba(52,199,89,.9)}
+.plan-heat .cell[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;font-size:11px;padding:4px 8px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:10}
+.plan-settings{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--hair)}
+.plan-settings label{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.plan-settings select,.plan-settings input[type=time]{padding:6px 10px;border-radius:10px;border:1px solid var(--line);background:#fff;font-size:13px;color:var(--ink);outline:none;font-family:inherit}
+.plan-settings select:focus,.plan-settings input[type=time]:focus{border-color:var(--brand)}
+@media(max-width:640px){.plan-card{padding:18px}.plan-heat{gap:3px}}
 .w-spell-in{width:100%;max-width:380px;border:1.5px solid #d2d2d7;border-radius:14px;padding:12px 16px;font-size:19px;text-align:center;outline:none;display:block;margin:14px auto 0;background:#fff;transition:border-color .18s}
 .w-spell-in:focus{border-color:var(--brand)}
 .w-fb{margin-top:14px;font-size:14px;font-weight:600;border-radius:12px;padding:9px 14px}
@@ -622,6 +652,7 @@ details.custom textarea:focus{border-color:var(--brand)}
           </select>
         </label>
       </div>
+      <div class="plan-card" id="plan-card"></div>
       <h3 class="w-sec">选择词库关卡（点击任意一组直接开练）</h3>
       <div class="cat-filter" id="w-book-tabs"></div>
       <div class="w-lists" id="w-lists"></div>
@@ -7545,6 +7576,7 @@ function dueText(ts){
 }
 function gradeWord(id, g, rt){
   const now = Date.now();
+  const _isNew = !WREC[id];   // 评分前无记录 = 新学词
   const r = WREC[id] || { s: 20, stage: 0, due: 0, lapses: 0, seen: 0, rt: 0 };
   r.seen = (r.seen || 0) + 1;
 
@@ -7576,9 +7608,128 @@ function gradeWord(id, g, rt){
   }
   WREC[id] = r;
   store.set('ieltsType.words', WREC);
+  planBump(_isNew);
   return r;
 }
-$('#w-daily').onchange = e => store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10);
+$('#w-daily').onchange = e => { store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10); renderPlan(); };
+
+/* ================= 每日计划：打卡 / 热力图 / 提醒 ================= */
+const K_PLAN = 'ieltsType.plan';
+/* 读取计划，无数据时返回默认结构 */
+function getPlan(){
+  return store.get(K_PLAN, { goal: 20, days: {}, remind: '', remindOn: false, lastRemind: '' });
+}
+function setPlan(p){ store.set(K_PLAN, p); }
+/* 本地时区 YYYY-MM-DD（toISOString 返回 UTC，会串日期，不能用） */
+function dayKeyOf(dt){
+  return dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
+}
+function todayKey(){ return dayKeyOf(new Date()); }
+/* 每次评分后累计答题数；新词/复习分开记，达到目标自动打卡 */
+function planBump(isNew){
+  const p = getPlan();
+  const k = todayKey();
+  const d = p.days[k] || { ans: 0, rv: 0, nw: 0, ok: false };
+  d.ans++;
+  if(isNew) d.nw++; else d.rv++;
+  let justOk = false;
+  if(d.ans >= p.goal && !d.ok){ d.ok = true; justOk = true; }
+  p.days[k] = d;
+  setPlan(p);
+  if(justOk){
+    const streak = planStreak(p);
+    toast('今日打卡成功 · 连续 ' + streak + ' 天', 3500);
+    beep('done');
+  }
+}
+/* 连续打卡天数：从今天（若已达标）或昨天（若今天未达标）向前数 */
+function planStreak(p){
+  const d = new Date();
+  const k0 = todayKey();
+  if(!(p.days[k0] && p.days[k0].ok)) d.setDate(d.getDate() - 1);
+  let n = 0;
+  while(true){
+    const k = dayKeyOf(d);
+    if(p.days[k] && p.days[k].ok){ n++; d.setDate(d.getDate() - 1); }
+    else break;
+  }
+  return n;
+}
+/* 渲染计划卡片；dueArg 为词库首页传入的到期复习数，未传时按当前 WREC 现算 */
+function renderPlan(dueArg){
+  const card = $('#plan-card');
+  if(!card) return;
+  const p = getPlan();
+  const k = todayKey();
+  const t = p.days[k] || { ans: 0, rv: 0, nw: 0, ok: false };
+  const due = (typeof dueArg === 'number') ? dueArg : WORDS.filter(w => WREC[w.id] && WREC[w.id].due <= Date.now()).length;
+  const dailyEl = $('#w-daily');
+  const dailyNew = dailyEl ? (parseInt(dailyEl.value, 10) || 10) : 10;
+  const streak = planStreak(p);
+  const pct = Math.min(100, Math.round(t.ans / Math.max(1, p.goal) * 100));
+  const left = Math.max(0, p.goal - t.ans);
+  /* 近 30 天热力图：7 列 × 5 行 = 35 格，末 30 格为近 30 天，前 5 格占位 */
+  let heat = '';
+  const now = new Date();
+  for(let i = 34; i >= 0; i--){
+    if(i >= 30){ heat += '<div class="cell ph"></div>'; continue; }
+    const d = new Date(now); d.setDate(d.getDate() - i);
+    const dk = dayKeyOf(d);
+    const rec = p.days[dk];
+    let cls = '';
+    if(rec && rec.ok) cls = (rec.ans >= p.goal * 1.5 ? ' lv3' : ' lv2');
+    else if(rec && rec.ans > 0) cls = ' lv1';
+    heat += '<div class="cell' + cls + '" title="' + dk + ' · ' + ((rec && rec.ans) || 0) + ' 题"></div>';
+  }
+  card.innerHTML = ''
+    + '<div class="plan-head">'
+    +   '<h3>今日计划</h3>'
+    +   '<span class="plan-streak' + (streak > 0 ? '' : ' idle') + '">' + (streak > 0 ? '连续打卡 ' + streak + ' 天 🔥' : '尚未打卡') + '</span>'
+    + '</div>'
+    + '<div class="plan-sub">' + (t.ok ? '已打卡 ✓' : '<b>' + left + '</b> 题达标') + '</div>'
+    + '<div class="plan-bar' + (t.ok ? ' done' : '') + '"><div style="width:' + pct + '%"></div></div>'
+    + '<div class="plan-tasks">'
+    +   '<div class="plan-task"><span class="ico">📖</span><span class="label">复习到期</span><span class="val">' + due + ' 词 · 今日已练 ' + t.rv + '</span></div>'
+    +   '<div class="plan-task"><span class="ico">✨</span><span class="label">新词目标</span><span class="val">' + dailyNew + ' 个 · 今日已学 ' + t.nw + '</span></div>'
+    +   '<div class="plan-task"><span class="ico">🎯</span><span class="label">答题目标</span><span class="val' + (t.ok ? ' ok' : '') + '">' + t.ans + ' / ' + p.goal + (t.ok ? ' ✓' : '') + '</span></div>'
+    + '</div>'
+    + '<div class="plan-heat">' + heat + '</div>'
+    + '<div class="plan-settings">'
+    +   '<label>每日目标 <select class="plan-goal">' + [10,20,30,50,100].map(n => '<option value="' + n + '"' + (n === p.goal ? ' selected' : '') + '>' + n + '</option>').join('') + '</select></label>'
+    +   '<label>提醒时间 <input type="time" class="plan-remind" value="' + esc(p.remind || '') + '"></label>'
+    +   '<label><input type="checkbox" class="plan-remind-on"' + (p.remindOn ? ' checked' : '') + '> 开启提醒</label>'
+    + '</div>';
+}
+/* 事件委托：目标 / 提醒时间 / 提醒开关任一变更即写回并重渲染 */
+$('#plan-card').addEventListener('change', e => {
+  const t = e.target;
+  if(!t || !t.classList) return;
+  const p = getPlan();
+  if(t.classList.contains('plan-goal')){ p.goal = parseInt(t.value, 10) || 20; }
+  else if(t.classList.contains('plan-remind')){ p.remind = t.value || ''; }
+  else if(t.classList.contains('plan-remind-on')){ p.remindOn = !!t.checked; }
+  else return;
+  setPlan(p);
+  renderPlan();
+});
+/* 提醒定时器：30 秒检查一次，仅页面打开时有效，每天最多触发一次 */
+setInterval(() => {
+  const p = getPlan();
+  if(!p.remindOn || !p.remind) return;
+  const now = new Date();
+  const hm = p.remind.split(':').map(Number);
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const target = hm[0] * 60 + hm[1];
+  const k = todayKey();
+  if(cur >= target && !(p.days[k] && p.days[k].ok) && p.lastRemind !== k){
+    const rec = p.days[k];
+    const left = Math.max(0, p.goal - (rec ? rec.ans : 0));
+    toast('到点背单词啦 —— 今日目标还差 ' + left + ' 题', 6000);
+    beep('alarm');
+    p.lastRemind = k;
+    setPlan(p);
+  }
+}, 30000);
 
 /* ================= 自定义词库导入 ================= */
 let importDraft = null;
@@ -7763,6 +7914,7 @@ function renderWordsHome(){
   $('#w-stat-due').onclick = () => due > 0 ? startSession(null, 'review') : toast('现在没有到期的复习词');
   $('#w-stat-new').onclick = () => fresh > 0 ? startSession(null, 'new') : toast('所有新词都学完了');
   $('#w-stat-done').onclick = showMastered;
+  renderPlan(due);
 }
 function showMastered(){
   const mastered = WORDS.filter(w => WREC[w.id] && WREC[w.id].stage >= 8);
