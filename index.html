@@ -287,35 +287,6 @@ details.custom textarea:focus{border-color:var(--brand)}
 .sp-opt.dim{opacity:.4}
 .sp-opt:disabled{cursor:default;transform:none}
 /* ---------- 每日计划 ---------- */
-.plan-card{background:var(--card);border-radius:24px;box-shadow:var(--shadow);padding:22px 26px;margin-bottom:18px}
-.plan-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.plan-head h3{font-size:17px;font-weight:700;letter-spacing:-.015em}
-.plan-streak{font-size:13px;font-weight:600;color:var(--brand);background:rgba(0,113,227,.08);padding:4px 12px;border-radius:99px}
-.plan-streak.idle{color:var(--muted);background:#f0f0f3}
-.plan-sub{font-size:13px;color:var(--muted);margin-top:4px}
-.plan-sub b{color:var(--ink);font-weight:600}
-.plan-bar{height:8px;background:#ededf0;border-radius:99px;overflow:hidden;margin:14px 0 18px}
-.plan-bar>div{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--brand),var(--ok));transition:width .4s ease}
-.plan-bar.done>div{background:var(--ok)}
-.plan-tasks{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
-.plan-task{display:flex;align-items:center;gap:12px;font-size:13.5px;padding:10px 14px;background:#f5f5f7;border-radius:14px}
-.plan-task .ico{font-size:18px;flex:none;width:28px;text-align:center}
-.plan-task .label{flex:1;color:#3a3a3c}
-.plan-task .val{font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink)}
-.plan-task .val.ok{color:var(--ok)}
-.plan-heat{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:18px}
-.plan-heat .cell{aspect-ratio:1;border-radius:5px;background:#ededf0;position:relative;cursor:default;transition:transform .15s}
-.plan-heat .cell:hover{transform:scale(1.15)}
-.plan-heat .cell.ph{background:transparent}
-.plan-heat .cell.lv1{background:rgba(0,113,227,.18)}
-.plan-heat .cell.lv2{background:rgba(52,199,89,.55)}
-.plan-heat .cell.lv3{background:rgba(52,199,89,.9)}
-.plan-heat .cell[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;font-size:11px;padding:4px 8px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:10}
-.plan-settings{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--hair)}
-.plan-settings label{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
-.plan-settings select,.plan-settings input[type=time]{padding:6px 10px;border-radius:10px;border:1px solid var(--line);background:#fff;font-size:13px;color:var(--ink);outline:none;font-family:inherit}
-.plan-settings select:focus,.plan-settings input[type=time]:focus{border-color:var(--brand)}
-@media(max-width:640px){.plan-card{padding:18px}.plan-heat{gap:3px}}
 .w-spell-in{width:100%;max-width:380px;border:1.5px solid #d2d2d7;border-radius:14px;padding:12px 16px;font-size:19px;text-align:center;outline:none;display:block;margin:14px auto 0;background:#fff;transition:border-color .18s}
 .w-spell-in:focus{border-color:var(--brand)}
 .w-fb{margin-top:14px;font-size:14px;font-weight:600;border-radius:12px;padding:9px 14px}
@@ -702,15 +673,6 @@ details.custom textarea:focus{border-color:var(--brand)}
       <div class="w-book-list" id="w-book-list"></div>
     </div>
 
-    <div id="w-speed" style="display:none">
-      <div class="drill-top">
-        <button class="btn ghost" id="btn-sp-exit">← 结束</button>
-        <div class="drill-title" id="sp-title"></div>
-        <div class="progress" style="flex:1;margin-bottom:0;max-width:200px"><div id="sp-bar"></div></div>
-      </div>
-      <div class="w-card" id="sp-card"></div>
-      <div class="drill-hint"><kbd>1</kbd>-<kbd>4</kbd> 选择答案 · 每题 3 秒，凭第一直觉作答</div>
-    </div>
   </section>
 
   <!-- ============ 阅读理解 ============ -->
@@ -7546,7 +7508,6 @@ function wShow(sub){
   $('#w-home').style.display = sub === 'home' ? '' : 'none';
   $('#w-study').style.display = sub === 'study' ? '' : 'none';
   $('#w-book').style.display = sub === 'book' ? '' : 'none';
-  $('#w-speed').style.display = sub === 'speed' ? '' : 'none';
 }
 let curAudio = null;
 function speakEn(text){
@@ -7637,7 +7598,6 @@ function gradeWord(id, g, rt){
   planBump(_isNew);
   return r;
 }
-$('#w-daily').onchange = e => { store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10); islandRenderPanel(); };
 
 /* ================= 每日计划：打卡 / 热力图 / 提醒 ================= */
 const K_PLAN = 'ieltsType.plan';
@@ -7681,63 +7641,6 @@ function planStreak(p){
   }
   return n;
 }
-/* 渲染计划卡片；dueArg 为词库首页传入的到期复习数，未传时按当前 WREC 现算 */
-function renderPlan(dueArg){
-  const card = $('#plan-card');
-  if(!card) return;
-  const p = getPlan();
-  const k = todayKey();
-  const t = p.days[k] || { ans: 0, rv: 0, nw: 0, ok: false };
-  const due = (typeof dueArg === 'number') ? dueArg : WORDS.filter(w => WREC[w.id] && WREC[w.id].due <= Date.now()).length;
-  const dailyEl = $('#w-daily');
-  const dailyNew = dailyEl ? (parseInt(dailyEl.value, 10) || 10) : 10;
-  const streak = planStreak(p);
-  const pct = Math.min(100, Math.round(t.ans / Math.max(1, p.goal) * 100));
-  const left = Math.max(0, p.goal - t.ans);
-  /* 近 30 天热力图：7 列 × 5 行 = 35 格，末 30 格为近 30 天，前 5 格占位 */
-  let heat = '';
-  const now = new Date();
-  for(let i = 34; i >= 0; i--){
-    if(i >= 30){ heat += '<div class="cell ph"></div>'; continue; }
-    const d = new Date(now); d.setDate(d.getDate() - i);
-    const dk = dayKeyOf(d);
-    const rec = p.days[dk];
-    let cls = '';
-    if(rec && rec.ok) cls = (rec.ans >= p.goal * 1.5 ? ' lv3' : ' lv2');
-    else if(rec && rec.ans > 0) cls = ' lv1';
-    heat += '<div class="cell' + cls + '" title="' + dk + ' · ' + ((rec && rec.ans) || 0) + ' 题"></div>';
-  }
-  card.innerHTML = ''
-    + '<div class="plan-head">'
-    +   '<h3>今日计划</h3>'
-    +   '<span class="plan-streak' + (streak > 0 ? '' : ' idle') + '">' + (streak > 0 ? '连续打卡 ' + streak + ' 天 🔥' : '尚未打卡') + '</span>'
-    + '</div>'
-    + '<div class="plan-sub">' + (t.ok ? '已打卡 ✓' : '<b>' + left + '</b> 题达标') + '</div>'
-    + '<div class="plan-bar' + (t.ok ? ' done' : '') + '"><div style="width:' + pct + '%"></div></div>'
-    + '<div class="plan-tasks">'
-    +   '<div class="plan-task"><span class="ico">📖</span><span class="label">复习到期</span><span class="val">' + due + ' 词 · 今日已练 ' + t.rv + '</span></div>'
-    +   '<div class="plan-task"><span class="ico">✨</span><span class="label">新词目标</span><span class="val">' + dailyNew + ' 个 · 今日已学 ' + t.nw + '</span></div>'
-    +   '<div class="plan-task"><span class="ico">🎯</span><span class="label">答题目标</span><span class="val' + (t.ok ? ' ok' : '') + '">' + t.ans + ' / ' + p.goal + (t.ok ? ' ✓' : '') + '</span></div>'
-    + '</div>'
-    + '<div class="plan-heat">' + heat + '</div>'
-    + '<div class="plan-settings">'
-    +   '<label>每日目标 <select class="plan-goal">' + [10,20,30,50,100].map(n => '<option value="' + n + '"' + (n === p.goal ? ' selected' : '') + '>' + n + '</option>').join('') + '</select></label>'
-    +   '<label>提醒时间 <input type="time" class="plan-remind" value="' + esc(p.remind || '') + '"></label>'
-    +   '<label><input type="checkbox" class="plan-remind-on"' + (p.remindOn ? ' checked' : '') + '> 开启提醒</label>'
-    + '</div>';
-}
-/* 事件委托：目标 / 提醒时间 / 提醒开关任一变更即写回并重渲染（#plan-card 已移除，监听改绑到灵动岛面板内，此处加空值保护） */
-{ const _pc = $('#plan-card'); if(_pc) _pc.addEventListener('change', e => {
-  const t = e.target;
-  if(!t || !t.classList) return;
-  const p = getPlan();
-  if(t.classList.contains('plan-goal')){ p.goal = parseInt(t.value, 10) || 20; }
-  else if(t.classList.contains('plan-remind')){ p.remind = t.value || ''; }
-  else if(t.classList.contains('plan-remind-on')){ p.remindOn = !!t.checked; }
-  else return;
-  setPlan(p);
-  renderPlan();
-}); }
 /* 提醒定时器：30 秒检查一次，仅页面打开时有效，每天最多触发一次 */
 setInterval(() => {
   const p = getPlan();
@@ -8001,55 +7904,7 @@ function renderTask(){
   islandSet('', '单词 ' + (wSess.i + 1) + '/' + wSess.q.length + ' · ' + Math.round(wSess.done / wSess.q.length * 100) + '%', 'words');
   const card = $('#w-card');
   if(t.kind === 'speed'){ renderSpeedQ(t, card); return; }
-  if(t.kind === 'recall'){
-    const _d = nextDir(t.id); t.dir = _d; const zh2en = (_d === 'en');
-    if(zh2en){
-      card.innerHTML =
-        '<div class="w-kind">复习 · 中→英 · 记忆强度 ' + (r.s || 0) + '%</div>'
-        + '<div class="w-zh" style="font-size:22px">' + esc(w.zh) + '</div>'
-        + '<div class="w-note">回忆它的英文说法，然后翻面对照</div>'
-        + '<div class="w-ops"><button class="w-btn plain" id="w-reveal">显示单词 (Enter)</button></div>'
-        + '<div id="w-zh2en-ans"></div>'
-        + '<div class="w-strength"><div style="width:' + (r.s || 0) + '%"></div></div>'
-        + markBtnHTML(w.id);
-      $('#w-reveal').onclick = () => {
-        $('#w-zh2en-ans').innerHTML =
-          '<div class="w-word" style="font-size:34px">' + esc(w.en) + '</div>'
-          + '<div class="w-ipa">' + esc(w.ipa) + '</div>'
-          + '<div><button class="w-say" id="w-say">' + ICO_SAY + '</button></div>';
-        $('#w-say').onclick = () => speakEn(w.en);
-        speakEn(w.en);
-        card.querySelector('.w-ops').innerHTML =
-          '<button class="w-btn again" data-g="0">忘记</button>'
-          + '<button class="w-btn hard" data-g="1">模糊</button>'
-          + '<button class="w-btn good" data-g="2">认识</button>';
-        card.querySelectorAll('[data-g]').forEach(b => b.onclick = () => gradeRecall(t, +b.dataset.g));
-      };
-      bindMarkBtn();
-    }else{
-      card.innerHTML =
-        '<div class="w-kind">复习 · 记忆强度 ' + (r.s || 0) + '%</div>'
-        + '<div class="w-word">' + esc(w.en) + '</div>'
-        + '<div class="w-ipa">' + esc(w.ipa) + '</div>'
-        + '<div><button class="w-say" id="w-say">' + ICO_SAY + '</button></div>'
-        + '<div class="w-zh" id="w-zh" style="visibility:hidden">' + esc(w.zh) + '</div>'
-        + '<div class="w-note">回想它的中文意思，再点下方按钮</div>'
-        + '<div class="w-ops"><button class="w-btn plain" id="w-reveal">显示释义 (Enter)</button></div>'
-        + '<div class="w-strength"><div style="width:' + (r.s || 0) + '%"></div></div>'
-        + markBtnHTML(w.id);
-      $('#w-say').onclick = () => speakEn(w.en);
-      $('#w-reveal').onclick = () => {
-        $('#w-zh').style.visibility = 'visible';
-        card.querySelector('.w-ops').innerHTML =
-          '<button class="w-btn again" data-g="0">忘记</button>'
-          + '<button class="w-btn hard" data-g="1">模糊</button>'
-          + '<button class="w-btn good" data-g="2">认识</button>';
-        card.querySelectorAll('[data-g]').forEach(b => b.onclick = () => gradeRecall(t, +b.dataset.g));
-      };
-      bindMarkBtn();
-      speakEn(w.en);
-    }
-  }else if(t.kind === 'new-intro'){
+  if(t.kind === 'new-intro'){
     card.innerHTML =
       '<div class="w-kind">新词领读</div>'
       + '<div class="w-word">' + esc(w.en) + '</div>'
@@ -8080,21 +7935,6 @@ function renderTask(){
     });
     speakEn(w.en);
   }else renderSpell(t);
-}
-function gradeRecall(t, g){
-  const _rt = wSess.tShown ? (Date.now() - wSess.tShown) : 0;
-  const _r = gradeWord(t.id, g, _rt);
-  if(_r) toast(g === 0 ? '忘记 → ' + dueText(_r.due) + '重来'
-             : g === 1 ? '模糊 → ' + dueText(_r.due) + '再见'
-             : '认识 → ' + dueText(_r.due) + '再见', 1500);
-  if(t.dir) markDir(t.id, t.dir, g === 2);
-  wSess.stat.rv++;
-  if(g === 1) wSess.q.push({ id: t.id, kind: 'spell' });
-  if(g === 0){
-    wSess.q.push({ id: t.id, kind: 'spell' });
-    if((t.retry || 0) < 2) wSess.q.push({ id: t.id, kind: 'recall', retry: (t.retry || 0) + 1 });
-  }
-  wSess.done++; wSess.i++; renderTask();
 }
 /* ---------- 交替方向：这次写英文，下次写中文 ---------- */
 function wDirMode(){ return store.get('ieltsType.wDir', 'mix'); }
@@ -8392,13 +8232,12 @@ $('#btn-w-book').onclick = () => { renderBook(); wShow('book'); };
 $('#btn-w-book-back').onclick = () => { renderWordsHome(); wShow('home'); };
 $('#btn-w-exit').onclick = () => { clearTimeout(wSess.spTimer); clearTimeout(wSess.spAdv); renderWordsHome(); wShow('home'); };
 $('#w-daily').value = String(store.get('ieltsType.wordsDaily', 10));
-$('#w-daily').onchange = e => store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10);
+$('#w-daily').onchange = e => { store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10); islandRenderPanel(); };
 $('#w-dir').value = store.get('ieltsType.wDir', 'mix');
 $('#w-dir').onchange = e => store.set('ieltsType.wDir', e.target.value);
 
 /* ================= 极速看词（百词斩式 3 秒四选一） ================= */
 const SP_TIME = 3000;
-const spSess = { q: [], i: 0, right: 0, cur: null, t0: 0, timer: null, advance: null, locked: false };
 /* 四选一题面共用：干扰项去重 + 随机排列 */
 function speedOptions(w, en2zh){
   let opts = [w];
@@ -8468,85 +8307,10 @@ function gradeSpeedQ(t, chosen, card){
   clearTimeout(wSess.spAdv);
   wSess.spAdv = setTimeout(() => { if(studyActive()) renderTask(); }, ok ? 500 : 950);
 }
-/* ---------- 独立的极速看词模式 ---------- */
-function spVisible(){
-  return $('#view-words').classList.contains('active') && $('#w-speed').style.display !== 'none';
-}
-function startSpeed(){
-  const now = Date.now();
-  const due = Object.keys(WREC).filter(id => WREC[id] && WREC[id].due <= now && WMAP[id]);
-  const fresh = WORDS.filter(w => !WREC[w.id]).map(w => w.id);
-  let ids = shuffleArr(due).slice(0, 14).concat(shuffleArr(fresh).slice(0, 10));
-  if(ids.length < 20){                       // 到期/新词不足时从全部词库随机补题
-    const set = new Set(ids);
-    ids = ids.concat(shuffleArr(WORDS.map(w => w.id).filter(id => !set.has(id))).slice(0, 20 - ids.length));
-  }
-  ids = shuffleArr(ids).slice(0, 20);
-  Object.assign(spSess, { q: ids, i: 0, right: 0, cur: null, t0: 0, timer: null, advance: null, locked: false });
-  $('#sp-title').textContent = '极速看词 · ' + ids.length + ' 题 · 每题 3 秒';
-  wShow('speed');
-  renderSpeedTask();
-}
-function renderSpeedTask(){
-  clearTimeout(spSess.timer); clearTimeout(spSess.advance);
-  if(!spVisible()) return;
-  if(spSess.i >= spSess.q.length){ finishSpeed(); return; }
-  const id = spSess.q[spSess.i];
-  const w = WMAP[id];
-  const en2zh = Math.random() < 0.5;         // 看词选义 / 看义选词
-  const opts = speedOptions(w, en2zh);
-  spSess.cur = { id, en2zh };
-  spSess.locked = false;
-  spSess.t0 = Date.now();
-  $('#sp-bar').style.width = Math.round(spSess.i / spSess.q.length * 100) + '%';
-  const card = $('#sp-card');
-  card.innerHTML = spQuestionHTML(w, opts, en2zh, '极速看词 ' + (spSess.i + 1) + '/' + spSess.q.length);
-  const timer = card.querySelector('.sp-timer');
-  requestAnimationFrame(() => { if(spVisible() && timer) timer.classList.add('run'); });
-  card.querySelectorAll('.sp-opt').forEach(b => { b.onclick = () => pickSpeed(b.dataset.w); });
-  if(en2zh) speakEn(w.en);
-  spSess.timer = setTimeout(() => pickSpeed(null), SP_TIME);
-}
-function pickSpeed(chosen){
-  if(spSess.locked || !spSess.cur) return;
-  spSess.locked = true;
-  clearTimeout(spSess.timer);
-  const rt = Math.max(1, Date.now() - spSess.t0);
-  const ok = chosen === spSess.cur.id;
-  if(ok) spSess.right++;
-  gradeWord(spSess.cur.id, ok ? 2 : 0, ok ? rt : Math.max(rt, SP_TIME));
-  beep(ok ? 'done' : 'alarm');
-  const card = $('#sp-card');
-  spFreezeTimer(card);
-  spMarkOptions(card, spSess.cur.id, chosen);
-  spSess.i++;
-  spSess.advance = setTimeout(renderSpeedTask, ok ? 450 : 950);
-}
-function finishSpeed(){
-  const n = spSess.q.length, right = spSess.right;
-  const rate = n ? Math.round(right / n * 100) : 0;
-  wShow('home');
-  renderWordsHome();
-  showModal('<h3>极速看词完成</h3>'
-    + '<div class="bigstats">'
-    + '<div class="bigstat"><i>答题</i><b>' + n + '</b><i>题</i></div>'
-    + '<div class="bigstat"><i>答对</i><b>' + right + '</b><i>题</i></div>'
-    + '<div class="bigstat"><i>正确率</i><b>' + rate + '%</b><i>&nbsp;</i></div>'
-    + '</div>'
-    + '<div class="kv">答对即「认识」入记忆引擎，答错或超时会标记「忘记」并很快回到复习队列。</div>'
-    + '<div class="modal-actions">'
-    + '<button class="btn primary" data-act="sp-again">再来一轮</button>'
-    + '<button class="btn" data-act="w-home">返回单词首页</button></div>');
-}
-// $('#btn-w-speed').onclick = startSpeed;  // 已融合进「开始今日学习」
-$('#btn-sp-exit').onclick = () => { clearTimeout(spSess.timer); clearTimeout(spSess.advance); renderWordsHome(); wShow('home'); };
 document.addEventListener('keydown', e => {
   if(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   if(e.key < '1' || e.key > '4') return;
-  if(spVisible() && !spSess.locked){
-    const b = document.querySelectorAll('#sp-card .sp-opt')[+e.key - 1];
-    if(b && !b.disabled) pickSpeed(b.dataset.w);
-  }else if(studyActive() && !wSess.locked){
+  if(studyActive() && !wSess.locked){
     const t = wSess.q[wSess.i];
     if(t && t.kind === 'speed'){
       const b = document.querySelectorAll('#w-card .sp-opt')[+e.key - 1];
@@ -9086,7 +8850,6 @@ $('#modal').addEventListener('click', e => {
   else if(a === 'essay-retry'){ closeModal(); startEssay(essay.id, essay.prompt, essay.min); }
   else if(a === 'essay-home'){ closeModal(); goHome(); }
   else if(a === 'w-again'){ closeModal(); startSession(wSess.scope); }
-  else if(a === 'sp-again'){ closeModal(); startSpeed(); }
   else if(a === 'w-home'){ closeModal(); renderWordsHome(); wShow('home'); }
   else if(a === 'rd-review'){ closeModal(); }
   else if(a === 'rd-retry'){ closeModal(); startReading(rd.p.id); }
