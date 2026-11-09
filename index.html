@@ -1009,6 +1009,7 @@ function goHome(){
   if(rd.timer) clearInterval(rd.timer);
   shStopAll();
   try{ if(sh.rec){ sh.rec.stop(); } }catch(e){}
+  clearTimeout(wSess.spTimer); clearTimeout(wSess.spAdv);
   islandIdle();
   $$('.mode-card').forEach(c => c.classList.toggle('active', c.dataset.mode === curMode));
   showView('home');
@@ -9107,6 +9108,8 @@ $$('.mode-card').forEach(c => c.onclick = () => {
     $$('.mode-card').forEach(x => x.classList.toggle('active', x === c));
     if(window.speechSynthesis) speechSynthesis.cancel();
     showView('words');
+    /* 强制回到首页分栏：否则中途离开学习后回来会停在一道已作答、选项全禁用的死题上 */
+    wShow('home');
     renderWordsHome();
   }else if(c.dataset.mode === 'reading'){
     $$('.mode-card').forEach(x => x.classList.toggle('active', x === c));
