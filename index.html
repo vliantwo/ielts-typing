@@ -7949,7 +7949,10 @@ function startSession(listIdx, only){
   /* 到期复习词随机 35% 转成极速四选一快题，与拼写/翻面题混着练 */
   const q = due.map(id => ({ id, kind: Math.random() < 0.35 ? 'speed' : 'recall' }));
   fresh.forEach((w, k) => {
-    q.splice(Math.min(q.length, (k + 1) * 4), 0, { id: w.id, kind: 'new-intro' }, { id: w.id, kind: 'new-spell' });
+    q.splice(Math.min(q.length, (k + 1) * 5), 0,
+        { id: w.id, kind: 'new-intro' },
+        { id: w.id, kind: 'new-zh-pick' },
+        { id: w.id, kind: 'new-spell' });
   });
   if(!q.length){ toast(only === 'review' ? '现在没有到期的复习词' : only === 'new' ? '没有可学的新词了' : '这一组今天没有要复习的词，也没有新词了'); return; }
   Object.assign(wSess, { q, i: 0, done: 0, scope: listIdx, stat: { nw: 0, rv: 0, spell: 0, first: 0 }, locked: false, spTimer: null, spAdv: null });
@@ -8031,6 +8034,22 @@ function renderTask(){
     $('#w-say').onclick = () => speakEn(w.en);
     $('#w-go-spell').onclick = () => { wSess.done++; wSess.i++; renderTask(); };
     bindMarkBtn();
+    speakEn(w.en);
+  }else if(t.kind === 'new-zh-pick'){
+    const opts = speedOptions(w, true);    // en2zh=true，干扰为不同释义的中文
+    card.innerHTML =
+      '<div class="w-kind">新词认义</div>'
+      + '<div class="w-word">' + esc(w.en) + '</div>'
+      + '<div class="w-ipa">' + esc(w.ipa) + '</div>'
+      + '<div><button class="w-say" id="w-say">' + ICO_SAY + '</button></div>'
+      + '<div class="sp-ask" style="text-align:center">选出它的中文意思</div>'
+      + '<div class="sp-opts">' + opts.map((o, k) =>
+          '<button class="sp-opt" data-w="' + esc(o.id) + '"><span class="key">' + (k + 1) + '</span><span>' + esc(o.zh) + '</span></button>').join('') + '</div>'
+      + '<div class="w-fb" id="w-fb"></div>';
+    $('#w-say').onclick = () => speakEn(w.en);
+    card.querySelectorAll('.sp-opt').forEach(b => {
+      b.onclick = () => gradeNewZhPick(t, b.dataset.w, card);
+    });
     speakEn(w.en);
   }else renderSpell(t);
 }
@@ -8217,6 +8236,34 @@ function gradeSpellZhClick(t, chosenId, opts, card){
     if(fb) fb.innerHTML = '<div class="w-fb bad">✗ 不对。正确释义：' + esc(w.zh) + '</div>';
     wSess.done++;
     wSess.spAdv = setTimeout(() => { wSess.i++; renderTask(); }, 1100);
+  }
+}
+/* 新词认义（看英文选中文）：答对 = 建立形→义联结，答错 = 先领读再拼 */
+function gradeNewZhPick(t, chosenId, card){
+  if(wSess.locked) return;
+  wSess.locked = true;
+  clearTimeout(wSess.spTimer); clearTimeout(wSess.spAdv);
+  const w = WMAP[t.id];
+  const rt = Math.max(1, Date.now() - wSess.tShown);
+  const ok = chosenId === t.id;
+  /* 新词第一次：答对打 stage=0 s=50 初印象（还没过 recall/拼写，先建立基础）；答错不 gradeWord，等后面拼写再定 */
+  if(ok){
+    beep('done');
+    const fb = card.querySelector('#w-fb');
+    if(fb) fb.innerHTML = '<div class="w-fb ok">✓ 记住 ' + esc(w.en) + ' = ' + esc(w.zh) + '</div>';
+    wSess.spAdv = setTimeout(() => { wSess.i++; renderTask(); }, 600);
+  }else{
+    gradeWord(t.id, 0, rt);   // 答错 = 忘记，先打低分让后面拼写有机会追
+    beep('alarm');
+    card.querySelectorAll('.sp-opt').forEach(b => {
+      b.disabled = true;
+      if(b.dataset.w === t.id) b.classList.add('right');
+      else if(b.dataset.w === chosenId) b.classList.add('wrong');
+      else b.classList.add('dim');
+    });
+    const fb = card.querySelector('#w-fb');
+    if(fb) fb.innerHTML = '<div class="w-fb bad">✗ 正确释义：' + esc(w.zh) + ' —— 拼写题里再见</div>';
+    wSess.spAdv = setTimeout(() => { wSess.i++; renderTask(); }, 1400);
   }
 }
 function checkSpell(t){
