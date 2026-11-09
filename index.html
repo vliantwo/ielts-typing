@@ -234,7 +234,14 @@ details.custom textarea:focus{border-color:var(--brand)}
 .w-daily{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-left:auto}
 .w-sec{font-size:15px;margin:6px 0 10px;color:var(--ink);font-weight:600;letter-spacing:-.01em}
 .w-lists{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-bottom:20px}
-.w-list{background:var(--card);border-radius:16px;padding:16px;cursor:pointer;transition:transform .18s,box-shadow .18s;box-shadow:var(--shadow)}
+.w-list{background:var(--card);border-radius:16px;padding:16px;cursor:pointer;transition:transform .18s,box-shadow .18s;box-shadow:var(--shadow);position:relative}
+.w-del{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;border-radius:50%;background:#e8e8ed;color:var(--muted);font-size:14px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .18s,color .18s}
+.w-del:hover{background:var(--bad);color:#fff}
+.imp-ta{width:100%;min-height:150px;margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;font-size:13px;font-family:ui-monospace,Consolas,monospace;outline:none;resize:vertical;background:#fff;color:var(--ink)}
+.imp-ta:focus{border-color:var(--brand)}
+.imp-tip{font-size:12px;color:var(--muted);line-height:1.7;margin:8px 0 4px}
+.imp-tip code{background:#e8e8ed;border-radius:5px;padding:1px 6px;font-size:11px;color:#3a3a3c}
+.imp-prev{font-size:13px;margin-top:10px;line-height:1.8}
 .w-list:hover{transform:translateY(-2px);box-shadow:var(--shadow2)}
 .w-list h4{font-size:14.5px;color:var(--ink);font-weight:600}
 .w-list .w-meta{font-size:12px;color:var(--muted);margin:6px 0 10px}
@@ -577,6 +584,7 @@ details.custom textarea:focus{border-color:var(--brand)}
       <div class="w-actions">
         <button class="btn primary big" id="btn-w-start">开始今日学习</button>
         <button class="btn" id="btn-w-book">生词本（<span id="w-book-n">0</span>）</button>
+        <button class="btn" id="btn-w-import">导入词库</button>
                 <label class="w-daily" style="margin-left:0">练习方式
           <select id="w-dir" class="sel">
             <option value="mix" selected>智能 · 自适应</option>
@@ -7419,10 +7427,29 @@ WORD_LISTS.push(
 ]}
 );
 
+/* ---- 用户导入的自定义词库（从 localStorage 恢复） ---- */
+const K_CUSTOM = 'ieltsType.customLists';
+(store.get(K_CUSTOM, []) || []).forEach(l => {
+  if(l && Array.isArray(l.words) && l.words.length)
+    WORD_LISTS.push({ name: String(l.name || '自定义词库'), words: l.words, custom: true });
+});
+
 const WORDS = [];
 WORD_LISTS.forEach((l, i) => l.words.forEach(w => WORDS.push({ id: w[0].toLowerCase(), en: w[0], ipa: w[1], zh: w[2], list: i })));
 const WMAP = {};
 WORDS.forEach(w => { WMAP[w.id] = w; });
+/* 词库增删后重建索引（与初次构建的语义一致） */
+function rebuildWordIndex(){
+  WORDS.length = 0;
+  Object.keys(WMAP).forEach(k => delete WMAP[k]);
+  WORD_LISTS.forEach((l, i) => l.words.forEach(w => {
+    const o = { id: w[0].toLowerCase(), en: w[0], ipa: w[1], zh: w[2], list: i };
+    WORDS.push(o); WMAP[o.id] = o;
+  }));
+}
+function persistCustomLists(){
+  return store.set(K_CUSTOM, WORD_LISTS.filter(l => l.custom).map(l => ({ name: l.name, words: l.words })), '自定义词库');
+}
 
 let WREC = store.get('ieltsType.words', {});
 let MARKS = store.get('ieltsType.marks', []);
@@ -7507,6 +7534,134 @@ function gradeWord(id, g, rt){
 }
 $('#w-daily').onchange = e => store.set('ieltsType.wordsDaily', parseInt(e.target.value, 10) || 10);
 
+/* ================= 自定义词库导入 ================= */
+let importDraft = null;
+/* 解析文本：支持 JSON 与按行文本（CSV / TSV / 空格分隔），每行 [英文, 音标, 释义] */
+function parseImportText(text){
+  text = (text || '').trim();
+  if(!text) return { words: [], err: '内容为空' };
+  if(text[0] === '[' || text[0] === '{'){
+    try{
+      let data = JSON.parse(text);
+      if(!Array.isArray(data)) data = data.words || data.list || [];
+      const out = [];
+      data.forEach(it => {
+        if(Array.isArray(it) && it.length && typeof it[0] === 'string'){
+          out.push([String(it[0]).trim(), String(it[1] || '').trim(), String(it[2] || '').trim()]);
+        }else if(it && typeof it === 'object'){
+          const en = it.word || it.en || it.text || '';
+          const ipa = it.phonetic || it.ipa || it.pron || it.tr || '';
+          const zh = it.meaning || it.zh || it.def || it.definition || it.translation || it.cn || '';
+          if(en) out.push([String(en).trim(), String(ipa).trim(), String(zh).trim()]);
+        }
+      });
+      if(!out.length) return { words: [], err: 'JSON 中未识别到单词' };
+      return { words: out };
+    }catch(e){ return { words: [], err: 'JSON 解析失败：' + e.message }; }
+  }
+  const out = [];
+  text.split(/\r?\n/).forEach(line => {
+    line = line.trim(); if(!line) return;
+    let parts = line.split(/\t|;|,| {2,}/).map(s => s.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+    if(parts.length === 1){ // 单个空格分隔：apple /ˈæpl/ n. 苹果
+      const m = parts[0].match(/^([A-Za-z][A-Za-z'’\- ]*?)\s*(\/[^/]*\/)?\s*(.*)$/);
+      if(!m) return;
+      parts = [m[1].trim(), (m[2] || '').trim(), (m[3] || '').trim()];
+    }
+    const en = parts[0] || '';
+    if(!/^[A-Za-z]/.test(en)) return; // 跳过表头等非单词行
+    let ipa = '', zh = '';
+    if(parts[1] && /^\/.*\/$/.test(parts[1])){ ipa = parts[1]; zh = parts.slice(2).join(' '); }
+    else zh = parts.slice(1).join(' ');
+    if(!zh && !ipa) return;
+    out.push([en, ipa, zh]);
+  });
+  if(!out.length) return { words: [], err: '未识别到任何单词，请检查格式' };
+  return { words: out };
+}
+function showImportModal(){
+  importDraft = null;
+  const defName = '我的词库 ' + (WORD_LISTS.filter(l => l.custom).length + 1);
+  showModal('<h3>导入词库</h3>'
+    + '<div class="imp-tip">支持 <b>CSV / TSV / 纯文本 / JSON</b>，每行一个单词，列顺序为「英文, 音标, 释义」，音标可省略。<br>'
+    + '例：<code>apple, /ˈæpl/, n. 苹果</code> 或 <code>apple n. 苹果</code>；'
+    + 'JSON 例：<code>[{"word":"apple","meaning":"n. 苹果"}]</code></div>'
+    + '<label style="font-size:13px;color:var(--muted)">词库名称</label><br>'
+    + '<input id="imp-name" class="sel" style="width:100%;margin-top:6px" placeholder="' + esc(defName) + '">'
+    + '<div style="margin-top:10px"><input type="file" id="imp-file" accept=".txt,.csv,.tsv,.json,.md" style="font-size:13px"></div>'
+    + '<textarea id="imp-text" class="imp-ta" placeholder="或直接粘贴词库内容，每行一个单词……"></textarea>'
+    + '<div class="imp-prev" id="imp-preview"></div>'
+    + '<div class="modal-actions">'
+    + '<button class="btn ghost" id="imp-cancel">取消</button>'
+    + '<button class="btn" id="imp-parse">解析预览</button>'
+    + '<button class="btn primary" id="imp-ok" disabled>确认导入</button>'
+    + '</div>');
+  const $prev = $('#imp-preview'), $ok = $('#imp-ok');
+  function renderPrev(){
+    if(!importDraft){ $prev.innerHTML = ''; $ok.disabled = true; return; }
+    const d = importDraft, dup = d.dup, n = d.words.length;
+    $prev.innerHTML = '识别到 <b>' + n + '</b> 个新词'
+      + (dup ? '，已跳过 <b>' + dup + '</b> 个重复词' : '')
+      + (n > 5 ? '，前 5 个：' : '：')
+      + d.words.slice(0, 5).map(w => '<span class="miss-chip ok">' + esc(w[0]) + (w[2] ? ' · ' + esc(w[2].slice(0, 12)) : '') + '</span>').join(' ');
+    $ok.disabled = n === 0;
+  }
+  function doParse(){
+    const r = parseImportText($('#imp-text').value);
+    if(r.err){ importDraft = null; $prev.innerHTML = '<span style="color:var(--bad)">' + esc(r.err) + '</span>'; $ok.disabled = true; return; }
+    const seen = new Set(); const words = []; let dup = 0;
+    r.words.forEach(w => {
+      const id = w[0].toLowerCase();
+      if(!/^[a-z]/.test(id) || seen.has(id) || WMAP[id]){ dup++; return; }
+      seen.add(id); words.push(w);
+    });
+    importDraft = { words, dup };
+    renderPrev();
+  }
+  $('#imp-parse').onclick = doParse;
+  $('#imp-file').onchange = e => {
+    const f = e.target.files[0]; if(!f) return;
+    f.text().then(t => { $('#imp-text').value = t; doParse(); });
+  };
+  $('#imp-cancel').onclick = closeModal;
+  $('#imp-ok').onclick = () => {
+    if(!importDraft || !importDraft.words.length) return;
+    const name = ($('#imp-name').value.trim()) || defName;
+    const words = importDraft.words;
+    const list = { name, words, custom: true };
+    // 先落盘再改内存，避免存储写满时两边状态不一致
+    const snapshot = WORD_LISTS.filter(l => l.custom).concat([list])
+      .map(l => ({ name: l.name, words: l.words }));
+    if(!store.set(K_CUSTOM, snapshot, '自定义词库')) return;
+    WORD_LISTS.push(list);
+    const li = WORD_LISTS.length - 1;
+    words.forEach(w => {
+      const o = { id: w[0].toLowerCase(), en: w[0], ipa: w[1], zh: w[2], list: li };
+      WORDS.push(o); WMAP[o.id] = o;
+    });
+    closeModal(); renderWordsHome();
+    toast('已导入「' + name + '」' + words.length + ' 词' + (importDraft.dup ? '（跳过 ' + importDraft.dup + ' 个重复）' : ''));
+  };
+}
+$('#btn-w-import').onclick = showImportModal;
+function deleteCustomList(i){
+  const l = WORD_LISTS[i]; if(!l || !l.custom) return;
+  showModal('<h3>删除词库</h3><p style="font-size:14px;line-height:1.7">确定删除「' + esc(l.name) + '」（' + l.words.length + ' 词）吗？这些词的学习进度也会一并清除，内置词库不受影响。</p>'
+    + '<div class="modal-actions"><button class="btn ghost" id="del-no">取消</button><button class="btn primary" id="del-yes" style="background:var(--bad)">删除</button></div>');
+  $('#del-no').onclick = closeModal;
+  $('#del-yes').onclick = () => {
+    const ids = new Set(l.words.map(w => w[0].toLowerCase()));
+    WORD_LISTS.splice(i, 1);
+    rebuildWordIndex();
+    Object.keys(WREC).forEach(id => { if(ids.has(id) && !WMAP[id]) delete WREC[id]; });
+    store.set('ieltsType.words', WREC);
+    MARKS = MARKS.filter(id => WMAP[id]);
+    store.set('ieltsType.marks', MARKS);
+    persistCustomLists();
+    closeModal(); renderWordsHome(); toast('词库已删除');
+  };
+}
+
 /* ================= 阅读理解 ================= */
 const RD_PASSAGES = [];
 
@@ -7526,7 +7681,11 @@ function renderWordsHome(){
   $('#w-done').textContent = mastered;
   $('#w-book-n').textContent = book;
   const tabs = $('#w-book-tabs'); tabs.innerHTML = '';
-  [['core', '核心精选 500 词'], ['ext', '雅思全词库 5500 词'], ['all', '全部 ' + WORD_LISTS.length + ' 组']].forEach(([k, t]) => {
+  const customN = WORD_LISTS.filter(l => l.custom).length;
+  const tabsArr = [['core', '核心精选 500 词'], ['ext', '雅思全词库 5500 词']];
+  if(customN) tabsArr.push(['custom', '自定义 ' + customN + ' 组']);
+  tabsArr.push(['all', '全部 ' + WORD_LISTS.length + ' 组']);
+  tabsArr.forEach(([k, t]) => {
     const b = document.createElement('button');
     b.className = 'cat-chip' + (wBookFilter === k ? ' active' : '');
     b.textContent = t;
@@ -7535,16 +7694,23 @@ function renderWordsHome(){
   });
   const wrap = $('#w-lists'); wrap.innerHTML = '';
   WORD_LISTS.forEach((l, i) => {
-    if(wBookFilter === 'core' && i >= 10) return;
-    if(wBookFilter === 'ext' && i < 10) return;
+    if(wBookFilter === 'core' && (i >= 10 || l.custom)) return;
+    if(wBookFilter === 'ext' && (i < 10 || l.custom)) return;
+    if(wBookFilter === 'custom' && !l.custom) return;
     const ws = WORDS.filter(w => w.list === i);
     const learnedN = ws.filter(w => WREC[w.id]).length;
     const masteredN = ws.filter(w => WREC[w.id] && WREC[w.id].stage >= 8).length;
     const div = document.createElement('div');
     div.className = 'w-list';
-    div.innerHTML = '<h4>List ' + (i + 1) + ' · ' + esc(l.name) + '</h4>'
+    div.innerHTML = '<h4>' + (l.custom ? '自定义 · ' : 'List ') + (l.custom ? esc(l.name) : (i + 1) + ' · ' + esc(l.name)) + '</h4>'
       + '<div class="w-meta">已学 ' + learnedN + '/' + ws.length + ' · 掌握 ' + masteredN + '</div>'
       + '<div class="w-bar"><div style="width:' + Math.round(learnedN / ws.length * 100) + '%"></div></div>';
+    if(l.custom){
+      const del = document.createElement('button');
+      del.className = 'w-del'; del.title = '删除该词库'; del.textContent = '×';
+      del.onclick = e => { e.stopPropagation(); deleteCustomList(i); };
+      div.appendChild(del);
+    }
     div.onclick = () => startSession(i);
     wrap.appendChild(div);
   });
