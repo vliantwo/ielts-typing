@@ -372,7 +372,7 @@ details.custom textarea:focus{border-color:var(--brand)}
 
 /* ---------- 灵动岛 ---------- */
 .island{position:fixed;top:11px;left:50%;transform:translateX(-50%);z-index:55;background:rgba(18,18,24,.62);backdrop-filter:saturate(170%) blur(24px);-webkit-backdrop-filter:saturate(170%) blur(24px);color:#fff;border-radius:980px;height:37px;width:250px;cursor:pointer;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.30),inset 0 0 0 1px rgba(255,255,255,.10);transition:width .38s cubic-bezier(.32,.72,.35,1),height .38s cubic-bezier(.32,.72,.35,1);-webkit-user-select:none;user-select:none}
-.island.open{width:min(400px,calc(100vw - 28px));height:212px;max-height:min(320px,calc(100vh - 40px));border-radius:34px}
+.island.open{width:min(400px,calc(100vw - 28px));height:212px;max-height:calc(100vh - 40px);border-radius:34px}
 .island.open .isl-panel{overflow:auto}
 .island.pulse{animation:islPulse .8s cubic-bezier(.32,.72,.35,1)}
 @keyframes islPulse{0%{transform:translateX(-50%) scale(1)}35%{transform:translateX(-50%) scale(1.14)}65%{transform:translateX(-50%) scale(.97)}100%{transform:translateX(-50%) scale(1)}}
@@ -8894,10 +8894,11 @@ function islandPulse(){
   void el.offsetWidth;
   el.classList.add('pulse');
 }
-/* 面板高度按内容自适应，避免内容被 212px 高度裁掉 */
+/* 面板高度按内容自适应，避免内容被 212px 高度裁掉（仅展开态生效，收起时必须清掉，否则岛会被撑成大椭圆） */
 function islandFit(){
   const el = $('#island'), panel = $('#isl-panel');
   if(!el || !panel) return;
+  if(!island.open){ el.style.height = ''; return; }
   const max = Math.max(160, window.innerHeight - 40);
   el.style.height = Math.min(panel.scrollHeight, max) + 'px';
 }
