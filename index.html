@@ -8142,6 +8142,27 @@ function renderSpell(t){
   const _why = isNew ? '' : dirWhy(t.id);
   const toZh = t.dir === 'zh';                    // 看英文 → 写中文
   const card = $('#w-card');
+  /* 仅复习类的 toZh（看英文选中文）改成四选项点击 */
+  if(t.kind === 'spell' && toZh){
+    const opts = speedOptions(w, true);    // en2zh=true 干扰为不同释义的中文
+    card.innerHTML =
+      '<div class="w-kind">拼写强化 · 选中文释义</div>'
+      + '<div class="w-word">' + esc(w.en) + '</div>'
+      + '<div class="w-ipa">' + esc(w.ipa) + '</div>'
+      + '<div><button class="w-say" id="w-say">' + ICO_SAY + '</button></div>'
+      + '<div class="sp-ask" style="text-align:center">选出它的中文意思（点击选项）</div>'
+      + '<div class="sp-opts">' + opts.map((o, k) =>
+          '<button class="sp-opt" data-w="' + esc(o.id) + '"><span class="key">' + (k + 1) + '</span><span>' + esc(o.zh) + '</span></button>').join('') + '</div>'
+      + '<div class="w-fb" id="w-fb"></div>'
+      + markBtnHTML(w.id);
+    $('#w-say').onclick = () => speakEn(w.en);
+    card.querySelectorAll('.sp-opt').forEach(b => {
+      b.onclick = () => gradeSpellZhClick(t, b.dataset.w, opts, card);
+    });
+    bindMarkBtn();
+    speakEn(w.en);
+    return;    // 直接 return，不走下面的打字逻辑
+  }
   card.innerHTML =
     '<div class="w-kind">' + (isNew ? '新词拼写' : '拼写强化') + (toZh ? ' · 写中文' : ' · 写英文')
     + (_why ? ' · ' + _why : '') + '</div>'
@@ -8167,6 +8188,36 @@ function renderSpell(t){
   });
   setTimeout(() => $('#w-in').focus(), 50);
   speakEn(w.en);
+}
+/* 拼写强化 · 选中文释义：四选一点击 */
+function gradeSpellZhClick(t, chosenId, opts, card){
+  if(wSess.locked) return;
+  wSess.locked = true;
+  clearTimeout(wSess.spTimer); clearTimeout(wSess.spAdv);
+  const w = WMAP[t.id];
+  const rt = Math.max(1, Date.now() - wSess.tShown);
+  const ok = chosenId === t.id;
+  gradeWord(t.id, ok ? 2 : 0, rt);
+  markDir(t.id, 'zh', ok);
+  wSess.stat.spell++;
+  beep(ok ? 'done' : 'alarm');
+  /* 冻结选项状态 */
+  card.querySelectorAll('.sp-opt').forEach(b => {
+    b.disabled = true;
+    if(b.dataset.w === t.id) b.classList.add('right');
+    else if(b.dataset.w === chosenId) b.classList.add('wrong');
+    else b.classList.add('dim');
+  });
+  const fb = card.querySelector('#w-fb');
+  if(ok){
+    if(fb) fb.innerHTML = '<div class="w-fb ok">✓ 正确：' + esc(w.zh) + '</div>';
+    wSess.done++;
+    wSess.spAdv = setTimeout(() => { wSess.i++; renderTask(); }, 600);
+  }else{
+    if(fb) fb.innerHTML = '<div class="w-fb bad">✗ 不对。正确释义：' + esc(w.zh) + '</div>';
+    wSess.done++;
+    wSess.spAdv = setTimeout(() => { wSess.i++; renderTask(); }, 1100);
+  }
 }
 function checkSpell(t){
   const w = WMAP[t.id];
