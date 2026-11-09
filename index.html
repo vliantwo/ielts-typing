@@ -634,7 +634,7 @@ details.custom textarea:focus{border-color:var(--brand)}
         <button class="btn primary big" id="btn-w-start">开始今日学习</button>
         <button class="btn" id="btn-w-book">生词本（<span id="w-book-n">0</span>）</button>
         <button class="btn" id="btn-w-import">导入词库</button>
-        <button class="btn" id="btn-w-speed" title="3 秒四选一，快速刷认词">极速看词</button>
+
                 <label class="w-daily" style="margin-left:0">练习方式
           <select id="w-dir" class="sel">
             <option value="mix" selected>智能 · 自适应</option>
@@ -7946,8 +7946,8 @@ function startSession(listIdx, only){
   let fresh = WORDS.filter(w => !WREC[w.id] && (listIdx == null || w.list === listIdx)).slice(0, dailyNew);
   if(only === 'review') fresh = [];
   if(only === 'new') due = [];
-  /* 到期复习词随机 35% 转成极速四选一快题，与拼写/翻面题混着练 */
-  const q = due.map(id => ({ id, kind: Math.random() < 0.35 ? 'speed' : 'recall' }));
+  /* 复习到期题全部走四选一快题（百词斩式 3 秒倒计时），新词另排 */
+  const q = due.map(id => ({ id, kind: 'speed' }));
   fresh.forEach((w, k) => {
     q.splice(Math.min(q.length, (k + 1) * 5), 0,
         { id: w.id, kind: 'new-intro' },
@@ -8510,7 +8510,7 @@ function finishSpeed(){
     + '<button class="btn primary" data-act="sp-again">再来一轮</button>'
     + '<button class="btn" data-act="w-home">返回单词首页</button></div>');
 }
-$('#btn-w-speed').onclick = startSpeed;
+// $('#btn-w-speed').onclick = startSpeed;  // 已融合进「开始今日学习」
 $('#btn-sp-exit').onclick = () => { clearTimeout(spSess.timer); clearTimeout(spSess.advance); renderWordsHome(); wShow('home'); };
 document.addEventListener('keydown', e => {
   if(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
